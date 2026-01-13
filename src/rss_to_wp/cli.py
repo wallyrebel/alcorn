@@ -291,24 +291,42 @@ def process_feed(
             )
 
             if result:
-                # Mark as processed
-                dedupe_store.mark_processed(
-                    entry_key=entry_key,
-                    feed_url=feed_config.url,
-                    entry_title=get_entry_title(entry),
-                    entry_link=get_entry_link(entry) or "",
-                    wp_post_id=result.get("id"),
-                    wp_post_url=result.get("link"),
-                )
-                processed += 1
-                
-                # Track for email notification
-                if published_articles is not None and result.get("link"):
-                    published_articles.append({
-                        "title": result.get("title", {}).get("rendered", get_entry_title(entry)),
-                        "url": result.get("link"),
-                        "feed_name": feed_config.name,
-                    })
+                # Check if this was a WordPress duplicate (already published)
+                if result.get("duplicate"):
+                    # WordPress found this already exists - treat as skip, not error
+                    # Also mark in SQLite so we don't re-process next time
+                    dedupe_store.mark_processed(
+                        entry_key=entry_key,
+                        feed_url=feed_config.url,
+                        entry_title=get_entry_title(entry),
+                        entry_link=get_entry_link(entry) or "",
+                        wp_post_id=None,
+                        wp_post_url=None,
+                    )
+                    logger.info(
+                        "entry_skipped_wp_duplicate",
+                        title=get_entry_title(entry)[:50],
+                    )
+                    skipped += 1
+                else:
+                    # Normal successful publish
+                    dedupe_store.mark_processed(
+                        entry_key=entry_key,
+                        feed_url=feed_config.url,
+                        entry_title=get_entry_title(entry),
+                        entry_link=get_entry_link(entry) or "",
+                        wp_post_id=result.get("id"),
+                        wp_post_url=result.get("link"),
+                    )
+                    processed += 1
+                    
+                    # Track for email notification
+                    if published_articles is not None and result.get("link"):
+                        published_articles.append({
+                            "title": result.get("title", {}).get("rendered", get_entry_title(entry)),
+                            "url": result.get("link"),
+                            "feed_name": feed_config.name,
+                        })
             else:
                 errors += 1
 

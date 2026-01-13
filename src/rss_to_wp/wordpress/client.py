@@ -342,7 +342,8 @@ class WordPressClient:
                 title=title[:50],
                 source_url=source_url[:60],
             )
-            return None  # Return None to indicate skip
+            # Return special dict to indicate this was a duplicate, not an error
+            return {"duplicate": True, "source_url": source_url}
         
         self._rate_limit()
 
