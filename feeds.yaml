@@ -1,0 +1,104 @@
+# =============================================================================
+# RSS Feeds Configuration for Alcorn County News
+# =============================================================================
+
+feeds:
+  # --- FetchRSS Feed 1 ---
+  - name: "Local Feed 1"
+    url: "https://fetchrss.com/feed/1vcaujD2G3c21vfgOm7bS9wZ.rss"
+    default_category: "Local News"
+    default_tags:
+      - "Mississippi"
+      - "Alcorn County"
+    max_per_run: 3
+
+  # --- FetchRSS Feed 2 ---
+  - name: "Local Feed 2"
+    url: "https://fetchrss.com/feed/1vcaujD2G3c21vdUuY5240MW.rss"
+    default_category: "Local News"
+    default_tags:
+      - "Mississippi"
+      - "Alcorn County"
+    max_per_run: 3
+
+  # --- FetchRSS Feed 3 ---
+  - name: "Local Feed 3"
+    url: "https://fetchrss.com/feed/1vcaujD2G3c21vdUu06F62dA.rss"
+    default_category: "Local News"
+    default_tags:
+      - "Mississippi"
+      - "Alcorn County"
+    max_per_run: 3
+
+  # --- FetchRSS Feed 4 ---
+  - name: "Local Feed 4"
+    url: "https://fetchrss.com/feed/1vcaujD2G3c21vdUpJ5VAA1j.rss"
+    default_category: "Local News"
+    default_tags:
+      - "Mississippi"
+      - "Alcorn County"
+    max_per_run: 3
+
+  # --- FetchRSS Feed 5 ---
+  - name: "Local Feed 5"
+    url: "https://fetchrss.com/feed/1vcaujD2G3c21vccpR51WAHC.rss"
+    default_category: "Local News"
+    default_tags:
+      - "Mississippi"
+      - "Alcorn County"
+    max_per_run: 3
+
+  # --- FetchRSS Feed 6 ---
+  - name: "Local Feed 6"
+    url: "https://fetchrss.com/feed/1vcaujD2G3c21vccs7DIv20Q.rss"
+    default_category: "Local News"
+    default_tags:
+      - "Mississippi"
+      - "Alcorn County"
+    max_per_run: 3
+
+  # --- FetchRSS Feed 7 ---
+  - name: "Local Feed 7"
+    url: "https://fetchrss.com/feed/1vcaujD2G3c21vcctj5uA2l8.rss"
+    default_category: "Local News"
+    default_tags:
+      - "Mississippi"
+      - "Alcorn County"
+    max_per_run: 3
+
+  # --- FetchRSS Feed 8 ---
+  - name: "Local Feed 8"
+    url: "https://fetchrss.com/feed/1vcaujD2G3c21vcd2xFDTBzm.rss"
+    default_category: "Local News"
+    default_tags:
+      - "Mississippi"
+      - "Alcorn County"
+    max_per_run: 3
+
+  # --- Crime Stoppers ---
+  - name: "Crime Stoppers"
+    url: "https://fetchrss.com/feed/1vcaujD2G3c21vcd587ZS6st.rss"
+    default_category: "Crime"
+    default_tags:
+      - "Crime Stoppers"
+      - "Alcorn County"
+      - "Crime"
+    max_per_run: 3
+
+  # --- FetchRSS Feed 10 ---
+  - name: "Local Feed 10"
+    url: "https://fetchrss.com/feed/1vcaujD2G3c21vcd689iq9Ap.rss"
+    default_category: "Local News"
+    default_tags:
+      - "Mississippi"
+      - "Alcorn County"
+    max_per_run: 3
+
+  # --- FetchRSS Feed 11 ---
+  - name: "Local Feed 11"
+    url: "https://fetchrss.com/feed/1vcaujD2G3c21vcd7T1vE718.rss"
+    default_category: "Local News"
+    default_tags:
+      - "Mississippi"
+      - "Alcorn County"
+    max_per_run: 3
