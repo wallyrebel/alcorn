@@ -218,7 +218,9 @@ def run(
         except Exception as e:
             logger.error("email_notification_error", error=str(e))
 
-    if total_errors > 0:
+    # Only exit with error if nothing was accomplished (no processed, no skipped)
+    # This means partial success (some errors but some articles published/skipped) = success
+    if total_errors > 0 and total_processed == 0 and total_skipped == 0:
         raise typer.Exit(1)
 
 
