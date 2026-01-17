@@ -120,3 +120,12 @@ feeds:
       - "Mississippi"
       - "Alcorn County"
     max_per_run: 3
+
+  # --- FetchRSS Feed 14 ---
+  - name: "Local Feed 14"
+    url: "https://fetchrss.com/feed/1vcaujD2G3c21vgQmMDQnBLX.rss"
+    default_category: "Local News"
+    default_tags:
+      - "Mississippi"
+      - "Alcorn County"
+    max_per_run: 3
