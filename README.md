@@ -5,7 +5,7 @@ Automated RSS feed monitoring, AI-powered article rewriting, and WordPress publi
 ## Features
 
 - **RSS Feed Monitoring**: Parse RSS/Atom feeds with robust error handling
-- **AI Rewriting**: Convert press releases to AP-style news articles using GPT-5 mini
+- **AI Rewriting**: Convert RSS entries to AP-style articles using the configured OpenAI model (default: gpt-4.1-nano)
 - **Smart Deduplication**: SQLite-based tracking ensures no duplicate posts
 - **Image Handling**: 
   - Extract images from RSS (media:content, enclosures, HTML)
@@ -13,6 +13,39 @@ Automated RSS feed monitoring, AI-powered article rewriting, and WordPress publi
   - Proper attribution in alt text
 - **WordPress Publishing**: Full REST API integration with categories and tags
 - **Scheduling**: GitHub Actions (every 15 min) or VPS cron/systemd
+
+## Source fidelity and publishing safeguards
+
+The RSS entry is the sole factual source. The writer must preserve its facts,
+attribution and uncertainty without fetching linked articles or adding outside
+knowledge. Aim for a normal article with paragraphs when the material supports
+it, but **there is no minimum word or paragraph count**. A short factual item can
+be published as one paragraph; never add filler to reach a length target.
+
+Unavailable, restricted, deleted, login-only and failed-source notices are
+rejected before rewriting. All RSS text fields are checked, including a summary
+when full content is also present. Generated headlines, excerpts and bodies are
+checked again, with a final access-error guard before WordPress requests.
+
+Every rewrite requires a separate model review against the exact RSS title and
+text. Unsupported claims, unusable sources, missing verdicts, malformed JSON,
+truncated replies and review failures cannot be published. There is no fallback
+that salvages unvalidated model output. This adds a second model request per
+candidate article. Automated semantic review reduces errors but is not a proof
+of factual accuracy; editorial sampling is still appropriate. Source access
+notices may conservatively block an actual story quoting such a notice.
+
+Policy skips are logged with a reason and are not marked as published in the
+deduplication database, so repaired source entries can be retried within the
+normal time window. Sources over 10,000 text characters are skipped for manual
+handling rather than silently truncated. Dry runs never mark entries processed.
+
+Run the offline regression checks with `python -m pytest -q` after installing
+`pip install -e '.[dev]'`. They use canned RSS and model responses and mock
+WordPress; no live post or notification is sent. The scheduled workflow runs
+these checks before processing feeds. Inspect `content_rejected`,
+`entry_skipped_content_policy` and `openai_rewrite_error` in run logs when an
+expected article does not appear.
 
 ## Quick Start
 

@@ -5,10 +5,10 @@ from __future__ import annotations
 import re
 import time
 from typing import Optional
-from urllib.parse import quote
 
 import requests
 
+from rss_to_wp.content_policy import ContentRejectedError, access_error_reason
 from rss_to_wp.utils import get_logger
 from rss_to_wp.wordpress.media import wp_upload_media
 
@@ -40,10 +40,12 @@ class WordPressClient:
 
         self.session = requests.Session()
         self.session.auth = (username, password)
-        self.session.headers.update({
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        })
+        self.session.headers.update(
+            {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+        )
 
         self._category_cache: dict[str, int] = {}
         self._tag_cache: dict[str, int] = {}
@@ -335,6 +337,11 @@ class WordPressClient:
         Returns:
             Created post data or None.
         """
+        # Last barrier before any WordPress requests, even for direct callers.
+        reason = access_error_reason(title, excerpt, content)
+        if reason:
+            raise ContentRejectedError(reason)
+
         # PRIMARY CHECK: Check for duplicate by source URL (most reliable - URL never changes)
         if source_url and self.check_duplicate_by_source_url(source_url):
             logger.warning(
@@ -344,7 +351,7 @@ class WordPressClient:
             )
             # Return special dict to indicate this was a duplicate, not an error
             return {"duplicate": True, "source_url": source_url}
-        
+
         self._rate_limit()
 
         # Add source attribution to content

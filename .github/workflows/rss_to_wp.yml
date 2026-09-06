@@ -45,6 +45,11 @@ jobs:
           pip install -r requirements.txt
           pip install -e .
 
+      - name: Test publishing safeguards before processing feeds
+        run: |
+          pip install pytest
+          python -m pytest -q
+
       - name: Create data directory
         run: mkdir -p data
 

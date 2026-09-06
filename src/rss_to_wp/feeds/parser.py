@@ -68,7 +68,9 @@ def get_entry_content(entry: dict[str, Any]) -> str:
         # content is usually a list
         contents = entry["content"]
         if isinstance(contents, list) and len(contents) > 0:
-            return contents[0].get("value", "")
+            value = contents[0].get("value", "")
+            if value and value.strip():
+                return value
 
     # Fall back to summary
     if "summary" in entry:

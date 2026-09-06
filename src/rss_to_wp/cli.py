@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -17,6 +16,11 @@ from rss_to_wp.config import (
     get_app_settings,
     load_feeds_config,
 )
+from rss_to_wp.content_policy import (
+    ContentRejectedError,
+    require_clean_article,
+    require_usable_source,
+)
 from rss_to_wp.feeds import (
     generate_entry_key,
     get_entry_content,
@@ -28,7 +32,7 @@ from rss_to_wp.feeds import (
 from rss_to_wp.images import download_image, find_fallback_image, find_rss_image
 from rss_to_wp.rewriter import OpenAIRewriter
 from rss_to_wp.storage import DedupeStore
-from rss_to_wp.utils import get_logger, setup_logging, send_email_notification, build_summary_email
+from rss_to_wp.utils import build_summary_email, send_email_notification, setup_logging
 from rss_to_wp.wordpress import WordPressClient
 
 # Load environment variables from .env file
@@ -196,11 +200,13 @@ def run(
     )
 
     # Send email notification ONLY if new articles were published
-    if (not dry_run 
+    if (
+        not dry_run
         and published_articles  # Only if there are new articles
-        and settings.smtp_email 
-        and settings.smtp_password 
-        and settings.notification_email):
+        and settings.smtp_email
+        and settings.smtp_password
+        and settings.notification_email
+    ):
         try:
             subject, html_body = build_summary_email(
                 processed_articles=published_articles,
@@ -293,6 +299,19 @@ def process_feed(
             )
 
             if result:
+                if result.get("skipped"):
+                    logger.warning(
+                        "entry_skipped_content_policy",
+                        title=get_entry_title(entry)[:50],
+                        reason=result["reason"],
+                    )
+                    # Retry on a future run if the feed repairs the source. Never
+                    # poison dedupe with rejected content or dry-run previews.
+                    skipped += 1
+                    continue
+                if dry_run:
+                    processed += 1
+                    continue
                 # Check if this was a WordPress duplicate (already published)
                 if result.get("duplicate"):
                     # WordPress found this already exists - treat as skip, not error
@@ -321,14 +340,18 @@ def process_feed(
                         wp_post_url=result.get("link"),
                     )
                     processed += 1
-                    
+
                     # Track for email notification
                     if published_articles is not None and result.get("link"):
-                        published_articles.append({
-                            "title": result.get("title", {}).get("rendered", get_entry_title(entry)),
-                            "url": result.get("link"),
-                            "feed_name": feed_config.name,
-                        })
+                        published_articles.append(
+                            {
+                                "title": result.get("title", {}).get(
+                                    "rendered", get_entry_title(entry)
+                                ),
+                                "url": result.get("link"),
+                                "feed_name": feed_config.name,
+                            }
+                        )
             else:
                 errors += 1
 
@@ -367,12 +390,22 @@ def process_entry(
 
     logger.info("processing_entry", title=title[:50])
 
-    # Rewrite with OpenAI
-    rewritten = rewriter.rewrite(
-        content=content,
-        original_title=title,
-        use_original_title=feed_config.use_original_title,
-    )
+    try:
+        # Inspect ALL textual RSS fields, including summaries when content:encoded
+        # exists. A usable-looking title must not mask a source access failure.
+        other_fields = [entry.get("summary", ""), entry.get("description", "")]
+        other_fields.extend(item.get("value", "") for item in entry.get("content", []))
+        require_usable_source(title, content, *other_fields)
+        rewritten = rewriter.rewrite(
+            content=content,
+            original_title=title,
+            use_original_title=feed_config.use_original_title,
+        )
+        if rewritten:
+            require_clean_article(rewritten)
+    except ContentRejectedError as exc:
+        logger.warning("content_rejected", title=title[:50], reason=str(exc))
+        return {"skipped": True, "reason": str(exc)}
 
     if not rewritten:
         logger.error("rewrite_failed", title=title[:50])
@@ -380,6 +413,7 @@ def process_entry(
 
     # Find image
     featured_media_id = None
+    image_result = None
 
     # Try RSS image first
     image_url = find_rss_image(entry, base_url=link or "")
