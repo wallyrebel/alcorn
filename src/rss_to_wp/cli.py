@@ -30,6 +30,7 @@ from rss_to_wp.feeds import (
     pick_entries,
 )
 from rss_to_wp.images import download_image, find_fallback_image, find_rss_image
+from rss_to_wp.local_categories import additional_local_categories
 from rss_to_wp.rewriter import OpenAIRewriter
 from rss_to_wp.storage import DedupeStore
 from rss_to_wp.utils import build_summary_email, send_email_notification, setup_logging
@@ -458,8 +459,18 @@ def process_entry(
 
     # Get/create category
     category_id = None
+    additional_names = additional_local_categories(
+        getattr(settings, "wordpress_base_url", ""), title, content
+    )
+    additional_category_ids = []
     if not dry_run and wp_client and feed_config.default_category:
         category_id = wp_client.get_or_create_category(feed_config.default_category)
+    if not dry_run and wp_client:
+        for name in additional_names:
+            local_id = wp_client.get_or_create_category(name)
+            if local_id:
+                additional_category_ids.append(local_id)
+                logger.info("local_category_selected", category=name, source_title=title[:80])
 
     # Get/create tags
     tag_ids = []
@@ -474,6 +485,7 @@ def process_entry(
             body_length=len(rewritten["body"]),
             has_image=featured_media_id is not None or image_result is not None,
             category=feed_config.default_category,
+            additional_categories=additional_names,
             tags=feed_config.default_tags,
         )
         return {"id": 0, "link": "dry-run://not-published"}
@@ -486,6 +498,7 @@ def process_entry(
         content=rewritten["body"],
         excerpt=rewritten.get("excerpt", ""),
         category_id=category_id,
+        additional_category_ids=additional_category_ids,
         tag_ids=tag_ids,
         featured_media_id=featured_media_id,
         source_url=link,
