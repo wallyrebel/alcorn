@@ -19,7 +19,7 @@ from rss_to_wp.wordpress.client import WordPressClient
 ])
 def test_explicit_local_rss_signals(source):
     assert additional_local_categories("https://alcornnewsms.com", "Update", source) == [
-        "Corinth MS News"
+        221
     ]
 
 
@@ -58,7 +58,7 @@ def test_pipeline_routes_original_rss_and_retains_default_category(
     }
     wp = Mock()
     wp.get_or_create_category.side_effect = lambda name: {
-        "Local News": 760, "Corinth MS News": 221
+        "Local News": 760
     }[name]
     cli.process_entry(
         {"title": source_title, "summary": "The office will close Monday."},
@@ -67,6 +67,7 @@ def test_pipeline_routes_original_rss_and_retains_default_category(
                         pexels_api_key=None, unsplash_access_key=None),
         rewriter, wp, False, Mock(),
     )
+    wp.get_or_create_category.assert_called_once_with("Local News")
     assert wp.create_post.call_args.kwargs["category_id"] == 760
     assert wp.create_post.call_args.kwargs["additional_category_ids"] == expected
 

@@ -459,18 +459,13 @@ def process_entry(
 
     # Get/create category
     category_id = None
-    additional_names = additional_local_categories(
+    additional_category_ids = additional_local_categories(
         getattr(settings, "wordpress_base_url", ""), title, content
     )
-    additional_category_ids = []
     if not dry_run and wp_client and feed_config.default_category:
         category_id = wp_client.get_or_create_category(feed_config.default_category)
-    if not dry_run and wp_client:
-        for name in additional_names:
-            local_id = wp_client.get_or_create_category(name)
-            if local_id:
-                additional_category_ids.append(local_id)
-                logger.info("local_category_selected", category=name, source_title=title[:80])
+    for local_id in additional_category_ids:
+        logger.info("local_category_selected", category_id=local_id, source_title=title[:80])
 
     # Get/create tags
     tag_ids = []
@@ -485,7 +480,7 @@ def process_entry(
             body_length=len(rewritten["body"]),
             has_image=featured_media_id is not None or image_result is not None,
             category=feed_config.default_category,
-            additional_categories=additional_names,
+            additional_category_ids=additional_category_ids,
             tags=feed_config.default_tags,
         )
         return {"id": 0, "link": "dry-run://not-published"}

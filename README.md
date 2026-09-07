@@ -276,8 +276,9 @@ MIT License
 ## Local section routing
 
 On `alcornnewsms.com`, new articles with clear Corinth city or local-institution
-signals in the original RSS title/body also receive the existing **Corinth MS News**
-category. The feed's default category is retained. Ambiguous names and explicit
+signals in the original RSS title/body also receive the existing **Corinth News**
+category (WordPress term ID `221`). Routing uses this stable, site-specific ID so
+renaming the category or its URL cannot create a duplicate city category. The feed's default category is retained. Ambiguous names and explicit
 other-state Corinth references are left alone; generated text cannot trigger routing.
 This keeps the Corinth archive and homepage section current without adding facts,
 changing old article URLs, or imposing a minimum article length. Other sites are not

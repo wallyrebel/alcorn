@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from rss_to_wp.content_policy import plain_text
 
 
-def additional_local_categories(base_url: str, title: str, content: str) -> list[str]:
+def additional_local_categories(base_url: str, title: str, content: str) -> list[int]:
     """Keep the existing city archive current on Alcorn County News only.
 
     These are signals in this publication's curated local feeds, not a general
@@ -35,5 +35,6 @@ def additional_local_categories(base_url: str, title: str, content: str) -> list
     regional_context = re.search(r"\b(?:Alcorn|Mississippi)\b", text, re.I)
     city_activity = re.search(r"\b(?:in|downtown|city of)\s+Corinth\b", text, re.I)
     if explicit_city or local_institution or (regional_context and city_activity):
-        return ["Corinth MS News"]
+        # The existing term ID survives display-name and slug changes.
+        return [221]
     return []
