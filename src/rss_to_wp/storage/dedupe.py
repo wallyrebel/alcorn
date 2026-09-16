@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -57,6 +58,11 @@ class DedupeStore:
                 CREATE TABLE IF NOT EXISTS editorial_decisions (
                     fingerprint TEXT PRIMARY KEY, reason TEXT NOT NULL,
                     decided_at TEXT NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS roundup_candidates (
+                    source_url TEXT PRIMARY KEY, payload TEXT NOT NULL, expires_at TEXT NOT NULL
                 )
             """)
             conn.commit()
@@ -171,6 +177,33 @@ class DedupeStore:
                 continue
         return False
 
+    def queue_roundup(self, candidate: dict) -> None:
+        published = datetime.fromisoformat(candidate["source_published_at"])
+        expires = (published.astimezone(timezone.utc) + timedelta(hours=48)).isoformat()
+        with self._get_connection() as conn:
+            conn.execute(
+                "DELETE FROM roundup_candidates WHERE expires_at < ?",
+                (datetime.now(timezone.utc).isoformat(),),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO roundup_candidates VALUES (?, ?, ?)",
+                (candidate["source_url"], json.dumps(candidate), expires),
+            )
+            conn.commit()
+
+    def load_roundup_candidates(self) -> list[dict]:
+        # Read-only: dry runs must not mutate queue state or expiration history.
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT payload FROM roundup_candidates ORDER BY expires_at"
+            ).fetchall()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def remove_roundup(self, source_url: str) -> None:
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM roundup_candidates WHERE source_url=?", (source_url,))
+            conn.commit()
+
     def get_processed_count(self, feed_url: Optional[str] = None) -> int:
         """Get count of processed entries.
 
@@ -238,6 +271,7 @@ class DedupeStore:
             cursor = conn.execute("DELETE FROM processed_entries")
             count = cursor.rowcount
             conn.execute("DELETE FROM editorial_decisions")
+            conn.execute("DELETE FROM roundup_candidates")
             conn.commit()
 
         logger.warning("database_cleared", deleted_count=count)

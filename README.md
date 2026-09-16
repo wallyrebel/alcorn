@@ -20,6 +20,7 @@ Source and image credit use the verified source name and original post link. Onl
 
 - **Publish:** Every editorial, factual, SEO, image and WordPress verification passes. The cap is five public articles per hourly run.
 - **Draft:** The source has useful information, but dates, image text, local relevance, reporting depth, metadata or the featured image need work. Up to three nonpublic review drafts can be saved per run, independently of the publication counter.
+- **Roundup queue:** Complete, useful briefs that are too short for individual articles can wait for three or four compatible items. Length alone is pooled; uncertainty and lack of news value are not.
 - **Reject:** No real news value, stale/expired content or duplicate coverage. No WordPress draft or media upload is created.
 
 Review drafts use the exact author and existing categories, carry a `[Review]` title, show the outstanding issues and a clearly labeled working summary, and link to the original source and graphics. They are editorial work items, not padded articles pretending to meet the publication minimum. They have no unapproved featured image or public SEO claim. Source-graphic links can expire; the permanent original post link remains available.
@@ -27,6 +28,18 @@ Review drafts use the exact author and existing categories, carry a `[Review]` t
 Their distinct `editorial-hold` marker prevents the automated publisher from treating them as resumable publishing drafts, even if the local cache is lost. Later runs never automatically promote, replace or overwrite review drafts. A human must review/edit/publish them in WordPress. The automated `quality-v1` staging drafts used during verified publishing remain a separate path.
 
 Uncertainty stays in the review notes, not asserted as a fact in the working summary. Image-derived details receive high-detail independent verification before public use. Reading errors remain possible; nothing about a source assessment alone authorizes publication. The 80-word evidence floor and 150-word article floor apply to automatic publication, not admission to the review queue.
+
+## Short-brief roundups
+
+The assignment editor explicitly clears useful, complete short briefs for aggregation. A source that is below the standalone evidence floor can also join the queue when the model has cleared it to wait. Uncertain facts, missing critical details, unclear local relevance and urgent active warnings never enter this queue. Existing human review drafts remain protected and are not automatically recycled.
+
+Candidates persist in the same SQLite database as publishing history and can accumulate across hourly runs. They expire 48 hours after the original source publication time (or sooner with a narrower `--hours` window). One bounded planning call considers up to 12 candidates and selects exactly three or four distinct briefs with a useful common topic or concrete local connection. It may decline all combinations. A shared official-account label or vague regional geography is insufficient; reposts of one event do not count as separate briefs. An unchanged pool with no suitable grouping cools down for 24 hours, while new/changed candidates permit a new attempt.
+
+Before writing, the pipeline fetches each original feed again, verifies its identity, checks freshness and unchanged source evidence, and refreshes signed image URLs. Changed or expired sources cannot be silently used from the queue. GPT-5 mini writes one clearly headed section per original source, and a separate review checks each brief against its own text and original images. Every brief must be factual, current, valuable, properly attributed and nonduplicative; the combined article must be coherent, meet the normal 150-word minimum without padding, and pass all existing SEO, image and quality gates. Each section receives a deterministic original-source link.
+
+At most one roundup is attempted per run. It counts as **one of the five public articles**, not an extra publication. All included source URLs are checked against WordPress and marked used only after the resulting post is confirmed. This prevents later standalone or overlapping roundup reuse, even if the local cache is lost. A useful combination that fails writing/review/image checks can become one protected review draft with each original brief and its sources; service errors leave the queue retryable. Incomplete staged roundups stay nonpublic for human review rather than being overwritten by another group.
+
+The feature uses the existing affordable model settings. Beyond normal source assessment, one attempt adds at most a 1,500-output-token grouping call, a 5,000-token writer call, a 1,500-token metadata call and a 4,000-token independent review call, plus the existing bounded Pexels fallback when needed. The metadata step writes short, complete SEO text separately from the brief sections; deterministic limits and independent factual review still apply. There are no regeneration loops. Waiting and roundup decisions appear in the run report, including `roundup_waiting`.
 
 ## Setup and commands
 
@@ -75,6 +88,7 @@ The SQLite cache is a performance layer, not the sole duplicate barrier. It is s
 - `scripts/verify_wordpress_draft.py`: explicitly creates one labeled **nonpublic** test draft, checks stored SEO fields, then trashes only that draft. Never publishes or edits an existing article.
 - `scripts/verify_pexels.py`: bounded live Pexels search and visual selection using fictional library-service facts; no WordPress access.
 - `scripts/verify_model_gate.py`: uses fictional fixture facts plus a blank test image to exercise rejection by the live model; no WordPress access.
+- `scripts/verify_roundup.py`: live assessment, grouping, writing and independent review of three explicitly fictional library briefs with a reviewed Pexels illustration; no WordPress access or writes.
 
 Editorial rejections and useful review drafts are normal successful outcomes; API, identity and publication errors fail the workflow and are recorded. Reports are retained as Actions artifacts for 14 days. No recurring summary email is sent by the new pipeline. Reports distinguish `published`, `drafts` and `skipped`, with source word counts, source text snapshots and structured assessment reasons.
 

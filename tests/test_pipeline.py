@@ -36,6 +36,7 @@ def setup_pipeline(monkeypatch, article, review, context, image_bytes):
     writer.rewrite.return_value = article | {"review": review}
     writer.assess_source.side_effect = lambda title, content, context, images: SourceAssessment(
         route="continue",
+        requires_immediate_attention=False,
         reason="Substantial local service news",
         headline=article["headline"],
         summary=plain_text(article["body"]),

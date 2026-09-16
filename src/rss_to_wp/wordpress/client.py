@@ -13,10 +13,14 @@ from rss_to_wp.content_policy import ContentRejectedError, plain_text
 from rss_to_wp.editorial import (
     ALLOWED_CATEGORIES,
     Review,
+    RoundupReview,
     SourceAssessment,
+    assessment_issues,
     canonical_url,
     render_content,
     require_approved_review,
+    require_approved_roundup,
+    roundup_body,
     similar_story,
     validate_article,
     validate_assessment,
@@ -253,6 +257,7 @@ class WordPressClient:
         issues,
         source_images,
         source_published_at,
+        roundup_sources=None,
     ):
         """Human review queue: this path can never set publish or resume an auto draft."""
         assessment = SourceAssessment.model_validate(assessment)
@@ -264,7 +269,10 @@ class WordPressClient:
         if author["name"] != self.author_name:
             raise RuntimeError("Exact draft byline verification failed")
         # Includes human drafts, existing holds and public posts. Never overwrite any.
-        if self.find_source_posts(source_url):
+        sources = roundup_sources or [{"source_url": source_url}]
+        if roundup_sources and not 3 <= len(roundup_sources) <= 4:
+            raise RuntimeError("Invalid roundup draft source count")
+        if any(self.find_source_posts(s["source_url"]) for s in sources):
             return {"duplicate": True, "reason": "source_already_in_wordpress"}
         marker = hashlib.sha256(source_url.encode()).hexdigest()[:12]
         slug = "editorial-review-" + marker
@@ -279,6 +287,21 @@ class WordPressClient:
             f'<p>Source: <a href="{escape(source_url, quote=True)}">{escape(source_name)}</a>.</p>'
         )
         content += f"<p>Source publication time: {escape(source_published_at)}</p>"
+        if roundup_sources:
+            for source in roundup_sources:
+                content += f"<h3>{escape(source['assessment']['headline'])}</h3>"
+                content += f"<p>{escape(source['assessment']['summary'])}</p>"
+                content += (
+                    f'<p>Source: <a href="{escape(canonical_url(source["source_url"]), quote=True)}">'
+                    f"{escape(source['source_name'])}</a>. Published: "
+                    f"{escape(source['source_published_at'])}</p>"
+                )
+                for index, url in enumerate(source.get("image_urls", []), 1):
+                    if urlsplit(url).scheme not in {"http", "https"}:
+                        raise RuntimeError("Invalid source image link")
+                    content += (
+                        f'<p><a href="{escape(url, quote=True)}">Original graphic {index}</a></p>'
+                    )
         if source_images:
             content += "<h2>Original source graphics</h2><ul>"
             for index, url in enumerate(source_images, 1):
@@ -339,11 +362,37 @@ class WordPressClient:
         related,
         featured_media_id,
         image_credit=None,
+        roundup_sources=None,
+        roundup_sections=None,
     ):
         core = {k: v for k, v in article.items() if k != "review"}
         validate_article(core, self.categories, related, self.min_article_words)
-        review = Review.model_validate(article["review"])
-        require_approved_review(review, self.min_quality_score)
+        if roundup_sources:
+            review = RoundupReview.model_validate(article["review"])
+            require_approved_roundup(
+                review, [s["source_id"] for s in roundup_sources], self.min_quality_score
+            )
+            if core["body"] != roundup_body(roundup_sections or [], roundup_sources, credits=False):
+                raise ContentRejectedError("Roundup sections do not match reviewed article")
+            from rss_to_wp.feeds.filter import is_within_window, parse_entry_date
+
+            for source in roundup_sources:
+                assessment = SourceAssessment.model_validate(source["assessment"])
+                validate_assessment(assessment, self.categories, len(source["image_urls"]))
+                if (
+                    assessment.route != "roundup"
+                    or assessment.requires_immediate_attention
+                    or assessment_issues(assessment)
+                ):
+                    raise ContentRejectedError(
+                        "Roundup contains a source not cleared for aggregation"
+                    )
+                published = parse_entry_date({"published": source["source_published_at"]})
+                if not published or not is_within_window(published, 48):
+                    raise ContentRejectedError("Roundup source expired before publication")
+        else:
+            review = Review.model_validate(article["review"])
+            require_approved_review(review, self.min_quality_score)
         if not featured_media_id:
             raise ContentRejectedError("featured_image_required")
         source_url = canonical_url(source_url)
@@ -365,6 +414,11 @@ class WordPressClient:
             if actual["status"] != "publish" or actual["link"] != candidate["link"]:
                 raise RuntimeError("Internal link is no longer published")
         existing = self.find_source_posts(source_url)
+        if roundup_sources:
+            # Never overwrite a human hold or a partially staged roundup. All original
+            # links are duplicate barriers, even after losing the local queue/cache.
+            if existing or any(self.find_source_posts(s["source_url"]) for s in roundup_sources):
+                return {"duplicate": True}
         if any(not self._is_staging_draft(p, source_url) for p in existing):
             return {"duplicate": True}
         if len(existing) > 1:
@@ -378,9 +432,23 @@ class WordPressClient:
             next(c["id"] for c in self.categories if c["slug"] == slug)
             for slug in article["category_slugs"]
         ]
-        marker = hashlib.sha256(source_url.encode()).hexdigest()[:12]
-        content = render_content(article, source_url, source_name, related, image_credit)
-        content += f"<!-- rss-to-wp:quality-v1:{marker} -->"
+        identity = (
+            "|".join(sorted(canonical_url(s["source_url"]) for s in roundup_sources))
+            if roundup_sources
+            else source_url
+        )
+        marker = hashlib.sha256(identity.encode()).hexdigest()[:12]
+        content = render_content(
+            article,
+            source_url,
+            source_name,
+            related,
+            image_credit,
+            roundup_sources=roundup_sources,
+            roundup_sections=roundup_sections,
+        )
+        marker_kind = "roundup-staging-v1" if roundup_sources else "quality-v1"
+        content += f"<!-- rss-to-wp:{marker_kind}:{marker} -->"
         payload = {
             "title": article["headline"],
             "content": content,

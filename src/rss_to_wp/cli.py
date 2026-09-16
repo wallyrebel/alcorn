@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlsplit
 
 import pendulum
 import typer
@@ -23,10 +22,11 @@ from rss_to_wp.config import (
 )
 from rss_to_wp.content_policy import ContentRejectedError, plain_text, require_usable_source
 from rss_to_wp.editorial import (
+    POLICY_VERSION,
+    BriefTooShortError,
     DraftRequiredError,
     assessment_issues,
     canonical_url,
-    fingerprint,
     render_content,
     similar_story,
 )
@@ -45,6 +45,7 @@ from rss_to_wp.images.pexels import PexelsClient, stock_credit
 from rss_to_wp.images.rss_extractor import find_rss_images
 from rss_to_wp.local_categories import additional_local_categories
 from rss_to_wp.rewriter import OpenAIRewriter
+from rss_to_wp.roundups import entry_fingerprint, load_pool, process_roundups
 from rss_to_wp.storage import DedupeStore
 from rss_to_wp.utils import setup_logging
 from rss_to_wp.wordpress import WordPressClient
@@ -93,6 +94,7 @@ def run(
         settings.openai_api_key, settings.openai_model, review_model=settings.openai_review_model
     )
     store = DedupeStore()
+    roundup_pool = load_pool(store, feeds, hours, dry_run=dry_run)
     budget = {"candidates": 0, "posts": 0, "drafts": 0}
     report = {
         "version": __version__,
@@ -125,12 +127,26 @@ def run(
                     logger,
                     budget=budget,
                     decisions=report["decisions"],
+                    roundup_pool=roundup_pool,
                 )
             except Exception as exc:
                 logger.error("feed_failed", feed=feed.name, error=str(exc))
                 report["decisions"].append({"feed": feed.name, "error": str(exc)})
                 counts = (0, 0, 1)
             totals = [a + b for a, b in zip(totals, counts)]
+        roundup_counts = process_roundups(
+            roundup_pool,
+            feeds,
+            settings,
+            store,
+            writer,
+            wp,
+            dry_run,
+            hours,
+            budget,
+            report["decisions"],
+        )
+        totals = [a + b for a, b in zip(totals, roundup_counts)]
     finally:
         report.update(
             processed=totals[0],
@@ -139,6 +155,7 @@ def run(
             skipped=totals[1],
             errors=totals[2],
             budget=budget,
+            roundup_waiting=len(roundup_pool),
         )
         path = get_data_dir() / ("dry-run-report.json" if dry_run else "run-report.json")
         path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -167,6 +184,7 @@ def process_feed(
     *,
     budget=None,
     decisions=None,
+    roundup_pool=None,
 ):
     budget = budget if budget is not None else {"candidates": 0, "posts": 0}
     decisions = decisions if decisions is not None else []
@@ -195,17 +213,10 @@ def process_feed(
             or budget["posts"] >= settings.max_posts_per_run
         ):
             break
-        title, content = get_entry_title(entry), get_entry_content(entry)
+        title = get_entry_title(entry)
         source_url = get_entry_link(entry) or ""
         decision = {"feed": feed_config.name, "source_url": source_url, "source_title": title}
-        image_identity = "|".join(
-            (urlsplit(url).hostname or "") + urlsplit(url).path
-            for url in find_rss_images(entry, base_url=source_url)
-        )
-        fp = fingerprint(
-            title,
-            content + feed_config.source_name + str(entry.get("published", "")) + image_identity,
-        )
+        fp = entry_fingerprint(entry, feed_config.source_name)
         try:
             key = generate_entry_key(entry, feed_config.url)
             if dedupe_store.is_processed(key) or dedupe_store.source_seen(source_url):
@@ -215,6 +226,11 @@ def process_feed(
                     "skipped": True,
                     "reason": "cached_rejection: " + dedupe_store.rejection_reason(fp),
                 }
+            elif (
+                roundup_pool is not None
+                and roundup_pool.get(canonical_url(source_url), {}).get("fingerprint") == fp
+            ):
+                result = {"queued_roundup": True, "reason": "waiting_for_compatible_briefs"}
             else:
                 before = budget["candidates"]
                 result = process_entry(
@@ -229,7 +245,15 @@ def process_feed(
                 )
                 attempted += budget["candidates"] - before
             decision.update(result)
-            if result.get("skipped") or result.get("duplicate"):
+            if result.get("queued_roundup"):
+                skipped += 1
+                if "candidate" in result:
+                    candidate = {**result["candidate"], "entry_key": key, "fingerprint": fp}
+                    if roundup_pool is not None:
+                        roundup_pool[candidate["source_url"]] = candidate
+                    if not dry_run:
+                        dedupe_store.queue_roundup(candidate)
+            elif result.get("skipped") or result.get("duplicate"):
                 skipped += 1
                 if not dry_run and result.get("cache_rejection"):
                     dedupe_store.record_rejection(fp, result["reason"])
@@ -269,6 +293,26 @@ def process_entry(
         "source_words": len(plain_text(content).split()),
         "source_text": plain_text(content)[:18000],
     }
+
+    def queue_brief():
+        assessment.route = "roundup"
+        audit["assessment"] = assessment.model_dump()
+        return {
+            "queued_roundup": True,
+            "reason": "Useful short brief waiting for a coherent roundup",
+            "candidate": {
+                "policy": POLICY_VERSION,
+                "feed_url": feed_config.url,
+                "source_url": link,
+                "source_name": feed_config.source_name,
+                "source_published_at": context["source_published_at"],
+                "title": title,
+                "content": plain_text(content),
+                "image_urls": [i["url"] for i in source_images],
+                "assessment": assessment.model_dump(),
+            },
+            **audit,
+        }
 
     def hold(reason):
         if budget.get("drafts", 0) >= settings.max_drafts_per_run:
@@ -331,6 +375,7 @@ def process_entry(
             "categories": wp_client.categories,
             "related_posts": related,
             "source_image_overflow": len(image_urls) > 3,
+            "minimum_source_words": settings.min_source_words,
             "source_local_category_ids": additional_local_categories(
                 settings.wordpress_base_url, title, content
             ),
@@ -369,6 +414,10 @@ def process_entry(
             raise ContentRejectedError("no_real_news_value: " + assessment.reason)
         if assessment.route == "draft" or assessment_issues(assessment):
             return hold(assessment.reason)
+        if assessment.route == "roundup":
+            if assessment.requires_immediate_attention:
+                return hold("Source was not cleared to wait for a roundup")
+            return queue_brief()
         context["source_assessment"] = assessment.model_dump()
         image_credit = None
         chosen_source = next((i for i in source_images if featured_size(i["bytes"])), None)
@@ -412,6 +461,25 @@ def process_entry(
                 min_quality_score=settings.min_quality_score,
             )
         except DraftRequiredError as exc:
+            evidence_words = len(
+                (
+                    plain_text(content)
+                    + " "
+                    + " ".join(
+                        fact for reading in assessment.image_readings for fact in reading.facts
+                    )
+                ).split()
+            )
+            if (
+                isinstance(exc, BriefTooShortError)
+                and not assessment.requires_immediate_attention
+                and not assessment_issues(assessment)
+                and evidence_words < settings.min_article_words
+            ):
+                assessment.reason = (
+                    "Useful complete brief could not meet the standalone article length minimum"
+                )
+                return queue_brief()
             return hold(str(exc))
         if dry_run:
             return {

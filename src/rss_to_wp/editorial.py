@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from rss_to_wp.content_policy import ContentRejectedError, plain_text, require_clean_article
 from rss_to_wp.images.pexels import stock_credit
 
-POLICY_VERSION = "quality-v3-editorial-routing"
+POLICY_VERSION = "quality-v4-roundups"
 ALLOWED_CATEGORIES = {
     "alcorn-county-news",
     "corinth-news",
@@ -40,7 +40,8 @@ class ImageReading(StrictModel):
 
 
 class SourceAssessment(StrictModel):
-    route: Literal["continue", "draft", "reject"]
+    route: Literal["continue", "roundup", "draft", "reject"]
+    requires_immediate_attention: bool
     reason: str = Field(min_length=5, max_length=800)
     headline: str = Field(max_length=110)
     summary: str = Field(max_length=2400)
@@ -52,6 +53,10 @@ class SourceAssessment(StrictModel):
 
 class DraftRequiredError(ContentRejectedError):
     """A useful source needs a human decision, never automatic publication."""
+
+
+class BriefTooShortError(DraftRequiredError):
+    """A concrete length failure, distinct from factual or editorial uncertainty."""
 
 
 def validate_assessment(assessment: SourceAssessment, categories: list[dict], image_count: int):
@@ -126,6 +131,95 @@ class Review(StrictModel):
     image_caption: str
     quality_score: int
     issues: list[str]
+
+
+class RoundupPlan(StrictModel):
+    source_ids: list[int] = Field(max_length=4)
+    headline: str = Field(max_length=110)
+    reason: str = Field(max_length=800)
+
+
+class RoundupSection(StrictModel):
+    source_id: int
+    heading: str = Field(min_length=8, max_length=110)
+    paragraphs: list[str] = Field(min_length=1, max_length=3)
+
+
+class RoundupProposal(StrictModel):
+    publish: bool
+    reason: str
+    headline: str = Field(max_length=110)
+    slug: str = Field(max_length=90)
+    category_slugs: list[str] = Field(max_length=3)
+    tags: list[str] = Field(max_length=5)
+    related_post_ids: list[int] = Field(max_length=2)
+    sections: list[RoundupSection] = Field(max_length=4)
+
+
+class RoundupSEO(StrictModel):
+    # Leave generation room to finish a sentence; validate_article enforces the
+    # real length limits before independent review and again at the write boundary.
+    excerpt_options: list[str] = Field(min_length=1, max_length=3)
+    seo_title_options: list[str] = Field(min_length=1, max_length=3)
+    meta_description_options: list[str] = Field(min_length=1, max_length=3)
+
+
+class BriefReview(StrictModel):
+    source_id: int
+    faithful: bool
+    current: bool
+    valuable: bool
+    properly_attributed: bool
+    not_duplicate: bool
+
+
+class RoundupReview(Review):
+    coherent: bool
+    briefs: list[BriefReview] = Field(min_length=3, max_length=4)
+
+
+def require_approved_roundup(review: RoundupReview, source_ids: list[int], minimum: int):
+    require_approved_review(review, minimum)
+    if (
+        not review.coherent
+        or sorted(b.source_id for b in review.briefs) != sorted(source_ids)
+        or any(
+            not all((b.faithful, b.current, b.valuable, b.properly_attributed, b.not_duplicate))
+            for b in review.briefs
+        )
+    ):
+        raise DraftRequiredError("Roundup coherence or individual brief verification failed")
+
+
+def roundup_body(sections: list[dict], sources: list[dict], *, credits: bool = True) -> str:
+    """Render exactly one attributed section per selected original source."""
+    parsed = [RoundupSection.model_validate(s) for s in sections]
+    source_map = {s["source_id"]: s for s in sources}
+    urls = [canonical_url(s["source_url"]) for s in sources]
+    if (
+        not 3 <= len(sources) <= 4
+        or len(set(urls)) != len(sources)
+        or len(source_map) != len(sources)
+        or sorted(s.source_id for s in parsed) != sorted(source_map)
+    ):
+        raise DraftRequiredError("Roundup must cover three or four distinct sources exactly once")
+    body = ""
+    headings = set()
+    for section in parsed:
+        if section.heading in headings or any(
+            p != plain_text(p) or not p.strip() for p in [section.heading, *section.paragraphs]
+        ):
+            raise DraftRequiredError("Invalid or repeated roundup section")
+        headings.add(section.heading)
+        body += f"<h2>{escape(section.heading)}</h2>"
+        body += "".join(f"<p>{escape(p)}</p>" for p in section.paragraphs)
+        if credits:
+            source = source_map[section.source_id]
+            body += (
+                f'<p><em>Source: <a href="{escape(canonical_url(source["source_url"]), quote=True)}" '
+                f'rel="noopener">{escape(source["source_name"])}</a>.</em></p>'
+            )
+    return body
 
 
 class StockPlan(StrictModel):
@@ -251,12 +345,20 @@ def render_content(
     source_name: str,
     related: list[dict],
     image_credit: dict | None = None,
+    *,
+    roundup_sources: list[dict] | None = None,
+    roundup_sections: list[dict] | None = None,
 ) -> str:
-    body = article["body"]
+    body = (
+        roundup_body(roundup_sections or [], roundup_sources)
+        if roundup_sources
+        else article["body"]
+    )
     if image_credit:
         # Themes do not always render featured-image captions; disclosure must be visible.
         body = f"<p><em>{stock_credit(image_credit)}</em></p>" + body
-    body += f'<p><em>Source: <a href="{escape(source_url, quote=True)}" rel="noopener">{escape(source_name)}</a>.</em></p>'
+    if not roundup_sources:
+        body += f'<p><em>Source: <a href="{escape(source_url, quote=True)}" rel="noopener">{escape(source_name)}</a>.</em></p>'
     chosen = {p["id"]: p for p in related}
     links = []
     for post_id in dict.fromkeys(article["related_post_ids"]):

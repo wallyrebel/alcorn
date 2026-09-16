@@ -21,6 +21,7 @@ from rss_to_wp.rewriter.openai_client import OpenAIRewriter
 def assessment_for(article, *, route="draft", image_count=1):
     return SourceAssessment(
         route=route,
+        requires_immediate_attention=False,
         reason="Useful official notice needs editorial verification",
         headline=article["headline"],
         summary="Corinth Library announced a new room for Alcorn County residents.",
