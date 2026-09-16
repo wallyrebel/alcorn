@@ -41,7 +41,7 @@ from rss_to_wp.feeds import (
 )
 from rss_to_wp.feeds.filter import parse_entry_date
 from rss_to_wp.images import download_image
-from rss_to_wp.images.downloader import featured_size
+from rss_to_wp.images.downloader import source_featured_size
 from rss_to_wp.images.pexels import PexelsClient, stock_credit
 from rss_to_wp.images.rss_extractor import find_rss_images
 from rss_to_wp.local_categories import additional_local_categories
@@ -424,13 +424,15 @@ def process_entry(
             return queue_brief()
         context["source_assessment"] = assessment.model_dump()
         image_credit = None
-        chosen_source = next((i for i in source_images if featured_size(i["bytes"])), None)
+        chosen_source = next((i for i in source_images if source_featured_size(i["bytes"])), None)
         if chosen_source:
             image_bytes, image_url = chosen_source["bytes"], chosen_source["url"]
             context["image_provenance"] = {"kind": "source", "url": image_url}
         else:
             if not settings.pexels_api_key:
-                return hold("A suitable featured image of at least 1200 by 600 pixels is needed")
+                return hold(
+                    "A clear, relevant original featured image or reviewed stock illustration is needed"
+                )
             evidence_text = (
                 plain_text(content)
                 + " "

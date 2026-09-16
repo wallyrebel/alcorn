@@ -21,6 +21,7 @@ from rss_to_wp.editorial import (
     DraftRequiredError,
     RoundupPlan,
     RoundupReview,
+    SourceIssue,
     require_approved_roundup,
     roundup_body,
 )
@@ -87,7 +88,9 @@ def test_short_useful_brief_queues_but_uncertainty_goes_to_draft(
     wp, writer = setup_pipeline(monkeypatch, article, review, context, image_bytes)
     reading = assessment_for(article, route="roundup")
     if uncertain:
-        reading.uncertainties = ["Opening date is ambiguous"]
+        reading.uncertainties = [
+            SourceIssue(detail="Opening date is ambiguous", blocks_publication=True)
+        ]
     writer.assess_source.side_effect = None
     writer.assess_source.return_value = reading
     result = cli.process_entry(entry_for(article), feed_config, settings, writer, wp, False, Mock())
@@ -260,6 +263,7 @@ def test_writer_and_independent_editor_get_all_original_evidence(
     metadata = {k: combined[k] for k in ("excerpt", "seo_title", "meta_description")}
     if stock:
         metadata["meta_description"] = "Too long " * 30
+        combined["review"]["image_kind"] = "pexels_stock"
     proposal = {k: v for k, v in combined.items() if k not in {"body", "review", *metadata}}
     proposal["headline"] = proposal["headline"].replace(" ", "\u00a0", 1) + "\n"
     writer = model_writer(

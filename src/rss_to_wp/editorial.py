@@ -10,12 +10,12 @@ from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from rss_to_wp.content_policy import ContentRejectedError, plain_text, require_clean_article
 from rss_to_wp.images.pexels import stock_credit
 
-POLICY_VERSION = "quality-v5-clean-drafts"
+POLICY_VERSION = "quality-v6-material-issues"
 ALLOWED_CATEGORIES = {
     "alcorn-county-news",
     "corinth-news",
@@ -33,13 +33,35 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
-class ImageReading(StrictModel):
+class SourceIssue(StrictModel):
+    detail: str = Field(min_length=1, max_length=800)
+    blocks_publication: bool = Field(
+        description="True only for an unresolved material fact essential to accurate reporting"
+    )
+
+
+class SourceIssues(StrictModel):
+    uncertainties: list[SourceIssue] = Field(max_length=10)
+
+    @field_validator("uncertainties", mode="before")
+    @classmethod
+    def preserve_legacy_issues(cls, values):
+        # Old saved assessments remain conservative. New model schemas require
+        # an explicit boolean, so 'None about the material facts' is not a failure.
+        if isinstance(values, list):
+            return [
+                {"detail": v, "blocks_publication": True} if isinstance(v, str) else v
+                for v in values
+            ]
+        return values
+
+
+class ImageReading(SourceIssues):
     image_id: int = Field(ge=1, le=3)
     facts: list[str] = Field(max_length=15)
-    uncertainties: list[str] = Field(max_length=10)
 
 
-class SourceAssessment(StrictModel):
+class SourceAssessment(SourceIssues):
     route: Literal["continue", "roundup", "draft", "reject"]
     requires_immediate_attention: bool
     reason: str = Field(min_length=5, max_length=800)
@@ -48,7 +70,6 @@ class SourceAssessment(StrictModel):
     category_slugs: list[str] = Field(max_length=3)
     tags: list[str] = Field(max_length=5)
     image_readings: list[ImageReading] = Field(max_length=3)
-    uncertainties: list[str] = Field(max_length=10)
     omitted_details: list[str] = Field(
         max_length=10,
         description="Nonessential unknowns that can safely be omitted. Not publication blockers.",
@@ -91,6 +112,8 @@ def validate_draft_copy(copy: DraftCopy, source_ids: list[int]):
 
 
 def validate_reader_text(value: str):
+    if re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", value):
+        raise RuntimeError("Control characters cannot appear in reader-facing copy")
     if value != plain_text(value) or len(value) > 2500:
         raise RuntimeError("Draft copy must be bounded plain text")
     if value.endswith((",", ":", ";", "...", "…")):
@@ -110,6 +133,7 @@ def draft_presentation_issues(copy: DraftCopy) -> list[str]:
     """Catch source-packet prose that is factual but not useful article copy."""
     pattern = re.compile(
         r"\b(?:graphic|screenshot|chart)\s+(?:titled|show\w*|display\w*|was titled)|"
+        r"\b(?:portrait-style |color )?photo(?:graph)?\s+(?:accompanying|shows|.*post shows)|"
         r"\battached tables?\b|\bperiod of record(?: shown|:|\s+\d{4}-)|\bproduct\(s\)|"
         r"\b(?:supportive work environment|competitive pay)\b|"
         r"(?:\d{2,3}(?:°[FC])?\s*/){2,}|\(Source:",
@@ -151,10 +175,14 @@ def validate_assessment(assessment: SourceAssessment, categories: list[dict], im
 
 
 def assessment_issues(assessment: SourceAssessment) -> list[str]:
+    issues = assessment.uncertainties + [
+        i for r in assessment.image_readings for i in r.uncertainties
+    ]
     return list(
         dict.fromkeys(
-            assessment.uncertainties
-            + [issue for reading in assessment.image_readings for issue in reading.uncertainties]
+            i if isinstance(i, str) else i.detail
+            for i in issues
+            if isinstance(i, str) or i.blocks_publication
         )
     )
 
@@ -176,6 +204,13 @@ class ArticleMetadata(StrictModel):
 
 
 class Proposal(ArticleMetadata):
+    # Give structured generation room to finish words/sentences. Article validation
+    # enforces publication limits; never truncate generated news or SEO strings.
+    headline: str = Field(max_length=220)
+    excerpt: str = Field(max_length=500)
+    slug: str = Field(max_length=180)
+    seo_title: str = Field(max_length=140)
+    meta_description: str = Field(max_length=330)
     paragraphs: list[str] = Field(
         description="Three or more distinct factual paragraphs as plain text. No HTML, Markdown, headline or byline. Empty if publish=false."
     )
@@ -194,6 +229,7 @@ class Review(StrictModel):
     metadata_accurate: bool
     not_duplicate: bool
     image_relevant: bool
+    image_kind: Literal["source_photo", "official_graphic", "pexels_stock"]
     image_alt: str
     image_caption: str
     quality_score: int
@@ -229,6 +265,10 @@ class RoundupSEO(StrictModel):
     excerpt_options: list[str] = Field(min_length=1, max_length=3)
     seo_title_options: list[str] = Field(min_length=1, max_length=3)
     meta_description_options: list[str] = Field(min_length=1, max_length=3)
+
+
+class ArticleSEO(RoundupSEO):
+    """Separate measured SEO options for standalone articles."""
 
 
 class BriefReview(StrictModel):
@@ -349,6 +389,8 @@ def validate_article(
         raise ContentRejectedError("editor_declined: " + parsed.reason)
     require_clean_article(article)
     for key in ("headline", "excerpt", "seo_title", "meta_description"):
+        if re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", article[key]):
+            raise ContentRejectedError("invalid_control_characters")
         if article[key] != plain_text(article[key]):
             raise ContentRejectedError("markup_in_metadata")
     if not 25 <= len(parsed.headline) <= 110 or not 25 <= len(parsed.seo_title) <= 70:
@@ -358,6 +400,8 @@ def validate_article(
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", parsed.slug) or len(parsed.slug) > 90:
         raise ContentRejectedError("invalid_slug")
     text = plain_text(parsed.body)
+    if re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", text):
+        raise ContentRejectedError("invalid_control_characters")
     if not min_words <= len(text.split()) <= 900:
         raise ContentRejectedError("insufficient_or_excessive_article_length")
     if re.search(
@@ -372,6 +416,9 @@ def validate_article(
     allowed = {c["slug"] for c in categories} & ALLOWED_CATEGORIES
     if not 1 <= len(parsed.category_slugs) <= 3 or not set(parsed.category_slugs) <= allowed:
         raise ContentRejectedError("invalid_categories")
+    for slug, place in (("corinth-news", "Corinth"), ("alcorn-county-news", "Alcorn")):
+        if slug in parsed.category_slugs and not re.search(r"\b" + place + r"\b", text, re.I):
+            raise ContentRejectedError("local_category_not_supported_in_article")
     if not 2 <= len(parsed.tags) <= 5 or len({t.casefold() for t in parsed.tags}) != len(
         parsed.tags
     ):

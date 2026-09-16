@@ -284,6 +284,7 @@ def test_stock_rejection_never_uploads_or_publishes(
 def test_wordpress_verifies_stock_disclosure_before_publishing(photo, article, review, context):
     from test_wordpress import client_fixture
 
+    review["image_kind"] = "pexels_stock"
     wp = client_fixture(article, review, context)
     result = wp.create_post(
         article=article | {"review": review},
@@ -304,6 +305,7 @@ def test_wordpress_verifies_stock_disclosure_before_publishing(photo, article, r
 def test_wordpress_blocks_if_stock_disclosure_removed(photo, article, review, context):
     from test_wordpress import client_fixture
 
+    review["image_kind"] = "pexels_stock"
     wp = client_fixture(article, review, context)
     original = wp._request.side_effect
 

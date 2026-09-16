@@ -52,6 +52,7 @@ def test_complete_article_requires_separate_visual_review(article, review, conte
     assert len(calls) == 2
     assert "image_url" in calls[1].kwargs["messages"][1]["content"][1]
     assert "temperature" not in calls[0].kwargs
+    assert calls[0].kwargs["reasoning_effort"] == "medium"
     assert calls[0].kwargs["max_completion_tokens"] == 5000
     assert calls[0].kwargs["response_format"]["json_schema"]["strict"] is True
 

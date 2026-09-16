@@ -45,7 +45,9 @@ def save_editorial_draft(
         validate_reader_text(review.image_caption)
     notes = list(dict.fromkeys(issues))
     if chosen and not featured_size(chosen["bytes"]):
-        notes.append("Draft source image is below the 1200 by 600 publication minimum")
+        notes.append(
+            "Original image is below the preferred large-preview size; publication still requires visual and image-type checks"
+        )
     if not chosen:
         notes.append("Featured image needed: " + review.image_reason)
     audit = {

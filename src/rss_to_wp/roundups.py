@@ -26,7 +26,7 @@ from rss_to_wp.editorial import (
 from rss_to_wp.feeds import get_entry_content, get_entry_title, parse_feed
 from rss_to_wp.feeds.filter import is_within_window, parse_entry_date
 from rss_to_wp.images import download_image
-from rss_to_wp.images.downloader import featured_size
+from rss_to_wp.images.downloader import source_featured_size
 from rss_to_wp.images.pexels import PexelsClient, stock_credit
 from rss_to_wp.images.rss_extractor import find_rss_images
 
@@ -145,7 +145,7 @@ def _refresh_sources(selected, feeds, hours):
 
 
 def _featured_image(plan, sources, images, writer, settings, context):
-    chosen = next((i for i in images if featured_size(i["bytes"])), None)
+    chosen = next((i for i in images if source_featured_size(i["bytes"])), None)
     if chosen:
         source = next(s for s in sources if s["source_id"] == chosen["source_id"])
         context["image_provenance"] = {
@@ -157,7 +157,7 @@ def _featured_image(plan, sources, images, writer, settings, context):
         return chosen["bytes"], chosen["url"], None, source
     if not settings.pexels_api_key:
         raise DraftRequiredError(
-            "Roundup needs a suitable featured image of at least 1200 by 600 pixels"
+            "Roundup needs a clear, relevant original image or reviewed stock illustration"
         )
     # Include every topic in the stock safety check, not just the roundup headline.
     evidence = "\n".join(

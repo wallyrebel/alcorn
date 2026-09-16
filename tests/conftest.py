@@ -85,6 +85,7 @@ def review():
         metadata_accurate=True,
         not_duplicate=True,
         image_relevant=True,
+        image_kind="source_photo",
         image_alt="Tables and shelves inside a library reading room",
         image_caption="The library reading room with tables and shelves.",
         quality_score=95,

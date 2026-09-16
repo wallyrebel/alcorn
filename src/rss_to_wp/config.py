@@ -50,8 +50,8 @@ class AppSettings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = Field(..., description="OpenAI API key")
-    openai_model: str = Field(default="gpt-5-mini", description="Affordable writing model")
-    openai_review_model: str = "gpt-5-mini"
+    openai_model: str = Field(default="gpt-5.4-mini", description="Affordable writing model")
+    openai_review_model: str = "gpt-5.4-mini"
     max_candidates_per_run: int = Field(default=6, ge=1, le=30)
     max_posts_per_run: int = Field(default=5, ge=1, le=10)
     max_drafts_per_run: int = Field(default=3, ge=1, le=10)

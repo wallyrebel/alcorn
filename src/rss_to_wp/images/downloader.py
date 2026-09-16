@@ -122,3 +122,28 @@ def download_image(
 def featured_size(image_bytes: bytes) -> bool:
     with Image.open(BytesIO(image_bytes)) as img:
         return img.width >= 1200 and img.height >= 600
+
+
+def publication_dimensions(width: int, height: int, kind: str) -> bool:
+    """Large previews are preferred; clear originals can use standard thumbnails."""
+    if width <= 0 or height <= 0 or not 0.4 <= width / height <= 3:
+        return False
+    if kind == "pexels_stock":
+        return width >= 1200 and height >= 600
+    if kind == "source_photo":
+        return width >= 480 and height >= 320 and width * height >= 150_000
+    if kind == "official_graphic":
+        return width >= 400 and height >= 300 and width * height >= 120_000
+    return False
+
+
+def source_featured_size(image_bytes: bytes) -> bool:
+    # Candidate only: the final visual editor must classify it, verify clarity,
+    # and pass the stricter photograph floor when it is not an official graphic.
+    with Image.open(BytesIO(image_bytes)) as img:
+        return publication_dimensions(img.width, img.height, "official_graphic")
+
+
+def publication_size(image_bytes: bytes, kind: str) -> bool:
+    with Image.open(BytesIO(image_bytes)) as img:
+        return publication_dimensions(img.width, img.height, kind)

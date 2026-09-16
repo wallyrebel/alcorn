@@ -27,6 +27,7 @@ from rss_to_wp.editorial import (
     validate_assessment,
     validate_draft_copy,
 )
+from rss_to_wp.images.downloader import publication_dimensions
 from rss_to_wp.wordpress.media import wp_upload_media
 
 
@@ -109,7 +110,7 @@ class WordPressClient:
             "posts",
             params={
                 "search": search,
-                "status": "publish,draft,pending,future,private",
+                "status": "publish,draft,pending,future,private,trash",
                 "context": "edit",
                 "per_page": 100,
             },
@@ -140,6 +141,32 @@ class WordPressClient:
             and post.get("author") == self.author_id
             and f"<!-- rss-to-wp:quality-v1:{marker} -->" in self._raw(post, "content")
         )
+
+    def verify_review_draft(self, snapshot, source_url):
+        """Explicit re-review only; never promote a changed, public or human draft."""
+        marker = hashlib.sha256(canonical_url(source_url).encode()).hexdigest()[:12]
+        current = self._request("GET", f"posts/{snapshot['id']}", params={"context": "edit"})
+        if (
+            snapshot.get("status") != "draft"
+            or current.get("status") != "draft"
+            or current.get("author") != self.author_id
+            or f"<!-- rss-to-wp:editorial-hold:v1:{marker} -->" not in self._raw(current, "content")
+            or not snapshot.get("modified_gmt")
+            or current.get("modified_gmt") != snapshot["modified_gmt"]
+            or any(
+                self._raw(current, key) != self._raw(snapshot, key)
+                for key in ("content", "title", "excerpt")
+            )
+            or any(
+                current.get(key) != snapshot.get(key)
+                for key in ("author", "slug", "featured_media", "categories", "tags")
+            )
+        ):
+            raise RuntimeError("Review draft changed or is not an owned nonpublic hold; stopped")
+        matches = self.find_source_posts(source_url)
+        if len(matches) != 1 or matches[0]["id"] != snapshot["id"]:
+            raise RuntimeError("Source has conflicting coverage; review draft promotion stopped")
+        return current
 
     def check_duplicate_by_slug(self, slug):
         return bool(
@@ -384,7 +411,12 @@ class WordPressClient:
         image_credit=None,
         roundup_sources=None,
         roundup_sections=None,
+        replace_review_draft=None,
     ):
+        if replace_review_draft:
+            if roundup_sources:
+                raise RuntimeError("Explicit review promotion supports individual stories only")
+            self.verify_review_draft(replace_review_draft, source_url)
         core = {k: v for k, v in article.items() if k != "review"}
         validate_article(core, self.categories, related, self.min_article_words)
         if roundup_sources:
@@ -423,8 +455,10 @@ class WordPressClient:
         media = self._request("GET", f"media/{featured_media_id}")
         details = media.get("media_details", {})
         if (
-            details.get("width", 0) < 1200
-            or details.get("height", 0) < 600
+            not publication_dimensions(
+                details.get("width", 0), details.get("height", 0), review.image_kind
+            )
+            or (review.image_kind == "pexels_stock") != bool(image_credit)
             or media.get("alt_text") != review.image_alt
         ):
             raise RuntimeError("Featured image verification failed")
@@ -439,7 +473,10 @@ class WordPressClient:
             # links are duplicate barriers, even after losing the local queue/cache.
             if existing or any(self.find_source_posts(s["source_url"]) for s in roundup_sources):
                 return {"duplicate": True}
-        if any(not self._is_staging_draft(p, source_url) for p in existing):
+        if replace_review_draft:
+            if len(existing) != 1 or existing[0]["id"] != replace_review_draft["id"]:
+                raise RuntimeError("Source coverage changed during explicit review")
+        elif any(not self._is_staging_draft(p, source_url) for p in existing):
             return {"duplicate": True}
         if len(existing) > 1:
             raise RuntimeError("Multiple staging drafts require manual review")
@@ -485,6 +522,10 @@ class WordPressClient:
             },
         }
         if existing:
+            if replace_review_draft:
+                self.verify_review_draft(replace_review_draft, source_url)
+                if self.check_duplicate_by_slug(payload["slug"]):
+                    raise RuntimeError("Conflicting publication slug; review draft remains held")
             post = self._request("POST", f"posts/{existing[0]['id']}", json=payload)
         else:
             if self.check_duplicate_by_slug(payload["slug"]):

@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from rss_to_wp.content_policy import ContentRejectedError, plain_text, require_usable_source
 from rss_to_wp.editorial import (
+    ArticleSEO,
     BriefTooShortError,
     DraftCopy,
     DraftRequiredError,
@@ -24,6 +25,7 @@ from rss_to_wp.editorial import (
     RoundupReview,
     RoundupSEO,
     SourceAssessment,
+    SourceIssue,
     StockPlan,
     StockSelection,
     assessment_issues,
@@ -36,6 +38,7 @@ from rss_to_wp.editorial import (
     validate_assessment,
     validate_draft_copy,
 )
+from rss_to_wp.images.downloader import publication_size
 from rss_to_wp.images.pexels import stock_topic_blocked
 from rss_to_wp.utils import get_logger
 
@@ -49,11 +52,16 @@ Preserve the actual issuer of a shared statement; the sharing page is not necess
 Do not browse, infer missing facts or use
 outside knowledge. Related posts are only link/duplicate candidates, NOT additional evidence.
 
-Publish ONLY substantial, timely, useful news for Corinth and Alcorn County, Mississippi.
+Publish ONLY substantial, timely, useful news for Corinth, Alcorn County and neighboring
+northeast Mississippi communities served by these verified feeds. NEMCC coverage and concrete
+Prentiss County public services, hiring and community news can qualify. Do not invent an Alcorn
+connection or use Alcorn/Corinth categories for a story located only in another county.
 Statewide public policy, deadlines and services affecting local readers qualify; unrelated
-county crime, Memphis-only forecasts, generic regional heat updates, employee recognition,
-congratulations, awareness-week slogans, promotional posts, photo captions, memes, stale
-announcements and vague engagement posts do not. Reject rather than invent a local angle.
+county crime outside this coverage area, Memphis-only forecasts, generic regional heat updates,
+empty congratulations, awareness-week slogans, promotional posts, photo captions, memes, stale
+announcements and vague engagement posts do not. Detailed local achievement profiles with a
+named person, concrete milestone and useful education/workforce/community information can qualify;
+remove institutional advertising and judge the supported facts. Reject rather than invent a local angle.
 Sources must identify who, what, where and when, and support a useful standalone article.
 Do not expand a short social post into filler to meet the supplied minimum length. Reject it.
 Never claim a personal interview, eyewitness reporting or independent verification.
@@ -65,7 +73,13 @@ ambiguous timing. Reject expired warnings, passed deadlines and reposted old new
 Use active sentences, a specific news lead, short paragraphs and natural search language.
 Return 3+ distinct factual paragraphs as an array of plain text strings. No HTML, Markdown,
 headline, byline or links in paragraphs (the publisher renders HTML and verified links).
+When the source has ample distinct facts, aim for 180-300 words of article text, comfortably
+above minimum_article_words. Preserve useful supported details instead of overcompressing a
+substantial source below that minimum. If the evidence cannot support it, publish=false;
+never add repetition, invented context, slogans or photo descriptions to reach a word target.
 Do not add background, advice, public reaction, motives or promises of updates.
+Report the news itself. Do not pad the article with descriptions of an accompanying portrait,
+poster, chart layout or the source's communications strategy. Image descriptions belong in alt text/captions.
 
 Headline 25-110 characters; SEO title 25-70; meta description aim 135-150, at most 165; excerpt 60-300.
 Use a readable lowercase hyphenated slug under 90 characters. No keyword stuffing/clickbait.
@@ -89,8 +103,11 @@ Every factual claim must be supported by the supplied title, text, original sour
 If any significant text is uncertain, set faithful=false and list it; never guess contact details.
 Reject unsupported names/numbers/dates/quotes/attribution/advice/background, speculation,
 padding, copied promotional language, sensational claims and unqualified allegations.
-Require substantial news value and direct Corinth/Alcorn or statewide public-service impact.
-Reject unrelated regional news, routine congratulations, stale/expired events, vague posts,
+Require substantial news value for Corinth/Alcorn, neighboring northeast Mississippi communities,
+NEMCC or statewide public-service readers. Concrete local achievement profiles, community events
+and neighboring-county hiring can qualify when useful and sufficiently reported; generic
+congratulations and institutional advertising cannot. Require accurate geography and categories.
+Reject unrelated regional news, empty congratulations, stale/expired events, vague posts,
 repetition, ambiguous source timing, and thin sources expanded to a word target. Existing
 coverage with no substantial update is a duplicate, even with different wording/source URL.
 Verify each selected internal link is useful to this specific story. It is fine to use none.
@@ -104,11 +121,16 @@ Reject stock showing ANY people, distinctive buildings/landmarks, readable text,
 brands. Generic books can illustrate library services; another library interior cannot
 illustrate the actual new local room. Uncertain or weak subject matches must fail.
 For all images reject logos, avatars, unrelated generic stock, unrelated people,
-text-only social screenshots, blurry pictures, unrelated places, and images implying an
+social-interface screenshots, blurry pictures, unrelated places, and images implying an
 unverified identity/event. Do not identify a person from the image alone. Only clearly legible
 official-source image text may add factual evidence; stock photos never add reporting facts.
 Image alt describes what is visibly shown, not the headline.
 Image caption describes the image honestly; the publisher appends source credit separately.
+Classify image_kind as source_photo, official_graphic or pexels_stock, matching image_provenance.
+For original photographs require sharp, clear news imagery; original official graphics must be
+legible at the actual supplied resolution. Do not reject a clear original just for being under
+1200 pixels wide: that is a large-preview preference, not an editorial failure. Blurry, tiny,
+illegible or misleading images still fail. Stock images retain the 1200-by-600 minimum.
 Score 0-100; >=90 requires publication-ready factual reporting, useful original synthesis,
 natural SEO, accurate metadata, meaningful local relevance and a suitable image.
 Judge the claims actually made. Nonessential omitted_details are not errors if the article and
@@ -152,7 +174,7 @@ Never infer identity, criminality or an event from a photograph. For a shared st
 the actual issuer (a Jones College statement shared by NEMCC is still from Jones College).
 Never guess tiny email addresses, numbers or dates. No invented local connection or background.
 
-Return route=reject for no real news value: memes, jokes, routine congratulations/recognition,
+Return route=reject for no real news value: memes, jokes, empty congratulations/recognition,
 generic promotions, cloud-identification lessons, old/expired alerts, duplicate events without
 new facts, or clearly unrelated routine news. A weather educational graphic is not an alert.
 Return route=roundup for a useful, timely, clearly local or statewide public-service brief whose
@@ -169,11 +191,16 @@ not standalone article readiness. The application may pool a clear, useful, nonu
 below its deterministic evidence-length floor instead of padding it into a standalone article.
 Return route=draft for useful official information needing human judgment or missing facts:
 unclear essential dates/current status, unclear local relevance, serious regional
-statements, image text with uncertain essential details, regional hiring notices. A serious college statement
+statements or image text with uncertain essential details. A serious college statement
 or sheriff hiring poster may deserve a draft even with zero RSS words. Explain what needs review.
 Return route=continue only for substantial, timely, clearly relevant Corinth/Alcorn news or
 statewide public services with sufficient supported facts for a 150-word article without padding,
-no unresolved factual uncertainty, and no duplicate. Continue means eligible for further checks,
+no unresolved material factual uncertainty, and no duplicate. This coverage includes neighboring
+northeast Mississippi communities, NEMCC and concrete Prentiss County public services/hiring.
+Substantive local achievement profiles or community events can qualify when they provide a named
+person/event and concrete milestones or useful details. Strip advertising; a congratulatory tone
+alone does not invalidate meaningful facts. Never invent an Alcorn connection or mislabel categories.
+Continue means eligible for further checks,
 NOT authorization to publish. Never reject solely on a word count or photo dimensions.
 
 Provide a short factual headline and a working summary of supported facts in plain text, no HTML
@@ -185,6 +212,11 @@ return its image_id, concise facts and uncertainties (empty facts allowed for ir
 Do not let boilerplate condolences or recruitment slogans inflate the evidence. If text/image
 disagree on a material fact, route=draft. Explicitly consider publication time and current time.
 
+Each uncertainties item must include detail and blocks_publication. Set blocks_publication=true
+ONLY for a material unresolved fact needed for accurate reporting. A statement such as 'None
+about the material facts' is NOT an uncertainty: return [] instead, or blocks_publication=false.
+Attribution to the named official issuer does not require independent visual identification of
+the pictured person. Never put a 'no uncertainty' sentence into a blocking issue.
 Use uncertainties ONLY for material unresolved facts whose absence/conflict prevents an accurate,
 useful account. Put nonessential unknowns in omitted_details instead, and leave them OUT of the
 summary and image facts. Examples: an unnamed person in a background photo, podcast runtime or
@@ -353,9 +385,9 @@ class OpenAIRewriter:
     def __init__(
         self,
         api_key: str,
-        model: str = "gpt-5-mini",
+        model: str = "gpt-5.4-mini",
         max_tokens: int = 5000,
-        review_model: str = "gpt-5-mini",
+        review_model: str = "gpt-5.4-mini",
     ):
         self.client = OpenAI(api_key=api_key, timeout=90, max_retries=1)
         self.model = model
@@ -380,7 +412,9 @@ class OpenAIRewriter:
             },
         }
         if model.startswith("gpt-5"):
-            params["reasoning_effort"] = "low"
+            # Keep the inexpensive mini models and existing hard token caps. Live
+            # low-effort evaluations produced broken metadata and ignored facts.
+            params["reasoning_effort"] = "medium"
         else:
             params["temperature"] = 0.1
         response = self.client.chat.completions.create(**params)
@@ -397,6 +431,32 @@ class OpenAIRewriter:
                 output_tokens=response.usage.completion_tokens,
             )
         return result
+
+    @staticmethod
+    def _select_metadata(metadata):
+        selected = {}
+        for key, lower, upper in (
+            ("seo_title", 25, 70),
+            ("meta_description", 110, 165),
+            ("excerpt", 60, 250),
+        ):
+            options = [" ".join(v.split()) for v in getattr(metadata, key + "_options")]
+            if key == "meta_description":
+                options += [" ".join(v.split()) for v in metadata.excerpt_options]
+            chosen = next(
+                (
+                    v
+                    for v in options
+                    if lower <= len(v) <= upper
+                    and v == plain_text(v)
+                    and not v.endswith((",", ":", ";", "...", "…"))
+                ),
+                None,
+            )
+            if chosen is None:
+                raise DraftRequiredError("No complete metadata option fits: " + key)
+            selected[key] = chosen
+        return selected
 
     def assess_source(self, title, content, context, source_images) -> SourceAssessment:
         if len(plain_text(content)) > 18000 or len(source_images) > 3:
@@ -449,7 +509,9 @@ class OpenAIRewriter:
         if assessment.route == "roundup" and assessment.requires_immediate_attention:
             assessment.route = "draft"
             assessment.uncertainties = assessment.uncertainties[:9] + [
-                "Source was not cleared to wait for a roundup"
+                SourceIssue(
+                    detail="Source was not cleared to wait for a roundup", blocks_publication=True
+                )
             ]
         elif (
             assessment.route == "continue"
@@ -651,6 +713,7 @@ class OpenAIRewriter:
             ]
         review = self._request(self.review_model, ROUNDUP_REVIEW_PROMPT, parts, RoundupReview, 4000)
         require_approved_roundup(review, [s["source_id"] for s in sources], min_quality_score)
+        self._check_featured_image(review, image_bytes, context)
         return {**article, "review": review.model_dump()}, sections
 
     def select_stock_image(self, title, content, plan, candidates) -> dict | None:
@@ -729,26 +792,116 @@ class OpenAIRewriter:
             raise DraftRequiredError(
                 "Writer could not prepare a publication-ready article: " + article.reason
             )
-        if use_original_title:
-            article.headline = original_title
-        data = article.model_dump()
-        paragraphs = data.pop("paragraphs")
-        if any(p != plain_text(p) for p in paragraphs):
-            raise DraftRequiredError("Writer returned invalid paragraph formatting")
-        data["body"] = "".join(f"<p>{escape(p)}</p>" for p in paragraphs)
-        try:
-            validate_article(
-                data, context["categories"], context["related_posts"], min_article_words
+        seo_prepared = False
+        for attempt in range(2):
+            if not article.publish:
+                raise DraftRequiredError("Copy editor declined: " + article.reason)
+            if use_original_title:
+                article.headline = original_title
+            data = article.model_dump()
+            paragraphs = data.pop("paragraphs")
+            if any(p != plain_text(p) for p in paragraphs):
+                raise DraftRequiredError("Writer returned invalid paragraph formatting")
+            data["body"] = "".join(f"<p>{escape(p)}</p>" for p in paragraphs)
+            body_text = plain_text(data["body"])
+            # Omit unsupported optional suggestions before review. Do not invent
+            # body text to justify a tag or a county category. Minimums still apply.
+            data["tags"] = list(
+                dict.fromkeys(
+                    t
+                    for t in data["tags"]
+                    if 3 <= len(t) <= 60
+                    and t == plain_text(t)
+                    and t.casefold() in body_text.casefold()
+                )
             )
-        except ContentRejectedError as exc:
-            if (
-                str(exc) == "insufficient_or_excessive_article_length"
-                and len(plain_text(data["body"]).split()) < min_article_words
+            local_names = {"corinth-news": "Corinth", "alcorn-county-news": "Alcorn"}
+            data["category_slugs"] = [
+                s
+                for s in data["category_slugs"]
+                if s not in local_names or local_names[s].casefold() in body_text.casefold()
+            ]
+            article.tags, article.category_slugs = data["tags"], data["category_slugs"]
+            if not seo_prepared and any(
+                not lower <= len(data[key]) <= upper
+                for key, lower, upper in (
+                    ("seo_title", 25, 70),
+                    ("meta_description", 110, 165),
+                    ("excerpt", 60, 250),
+                )
             ):
-                raise BriefTooShortError(
-                    "The supported article is below the standalone length minimum"
-                ) from exc
-            raise DraftRequiredError(str(exc)) from exc
+                metadata = self._request(
+                    self.model,
+                    ROUNDUP_SEO_PROMPT.replace("news roundup", "news article"),
+                    json.dumps({"article": data, "sources": evidence}),
+                    ArticleSEO,
+                    1500,
+                )
+                data.update(self._select_metadata(metadata))
+                for key in ("seo_title", "meta_description", "excerpt"):
+                    setattr(article, key, data[key])
+                seo_prepared = True
+            try:
+                validate_article(
+                    data, context["categories"], context["related_posts"], min_article_words
+                )
+                break
+            except (ContentRejectedError, ValidationError) as exc:
+                correctable = isinstance(exc, ValidationError) or str(exc) in {
+                    "insufficient_or_excessive_article_length",
+                    "headline_length",
+                    "description_length",
+                    "invalid_slug",
+                    "invalid_tags",
+                    "tag_not_supported_in_article",
+                    "local_category_not_supported_in_article",
+                }
+                # One bounded copyedit for measurable writing mistakes only. Never
+                # invent more evidence or retry a failed independent editorial review.
+                if (
+                    attempt == 0
+                    and correctable
+                    and len((text + " " + image_text).split()) >= min_article_words
+                ):
+                    correction = {
+                        **evidence,
+                        "previous_proposal": article.model_dump(),
+                        "validation_error": str(exc),
+                        "article_word_count": len(plain_text(data["body"]).split()),
+                        "metadata_character_counts": {
+                            k: len(data[k])
+                            for k in (
+                                "headline",
+                                "excerpt",
+                                "seo_title",
+                                "meta_description",
+                                "slug",
+                            )
+                        },
+                    }
+                    article = self._request(
+                        self.model,
+                        AP_STYLE_PROMPT
+                        + "\nCopyedit the previous proposal ONCE. Fix ALL measured length and metadata problems. "
+                        "Use only distinct concrete facts from the original evidence; never pad or invent. "
+                        "If too short, retain useful source facts omitted in the previous version; target 180-250 words. "
+                        "Use a short complete headline (45-85 characters), SEO title (30-60), and a complete "
+                        "meta description (120-150). Never chop off words or sentences. "
+                        "Use Local News for NEMCC/regional coverage unless the actual article establishes Corinth or Alcorn. "
+                        "If a faithful article cannot meet the requirements, publish=false.",
+                        json.dumps(correction),
+                        Proposal,
+                        3500,
+                    )
+                    continue
+                if (
+                    str(exc) == "insufficient_or_excessive_article_length"
+                    and len(plain_text(data["body"]).split()) < min_article_words
+                ):
+                    raise BriefTooShortError(
+                        "The supported article is below the standalone length minimum"
+                    ) from exc
+                raise DraftRequiredError(str(exc)) from exc
         review_content = [
             {"type": "text", "text": json.dumps({**evidence, "article": data})},
             visual_part(image_bytes),
@@ -769,8 +922,19 @@ class OpenAIRewriter:
             require_approved_review(review, min_quality_score)
         except ContentRejectedError as exc:
             raise DraftRequiredError(str(exc)) from exc
+        self._check_featured_image(review, image_bytes, context)
         return {**data, "review": review.model_dump()}
 
+    @staticmethod
+    def _check_featured_image(review, image_bytes, context):
+        stock = context.get("image_provenance", {}).get("kind") == "pexels_stock"
+        if (review.image_kind == "pexels_stock") != stock or not publication_size(
+            image_bytes, review.image_kind
+        ):
+            raise DraftRequiredError(
+                "Reviewed featured image does not meet its image-type requirements"
+            )
 
-def rewrite_with_openai(content, original_title, api_key, model="gpt-5-mini", **kwargs):
+
+def rewrite_with_openai(content, original_title, api_key, model="gpt-5.4-mini", **kwargs):
     return OpenAIRewriter(api_key, model).rewrite(content, original_title, **kwargs)

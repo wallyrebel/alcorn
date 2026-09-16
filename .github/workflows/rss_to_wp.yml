@@ -51,8 +51,8 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           # Variables override defaults; legacy nano model secrets are not used.
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5-mini' }}
-          OPENAI_REVIEW_MODEL: ${{ vars.OPENAI_REVIEW_MODEL || 'gpt-5-mini' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.4-mini' }}
+          OPENAI_REVIEW_MODEL: ${{ vars.OPENAI_REVIEW_MODEL || 'gpt-5.4-mini' }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           MAX_CANDIDATES_PER_RUN: '6'
           MAX_POSTS_PER_RUN: '5'

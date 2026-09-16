@@ -12,7 +12,12 @@ from test_pipeline import entry_for, image_response, setup_pipeline
 from test_wordpress import client_fixture
 
 from rss_to_wp import cli
-from rss_to_wp.editorial import DraftRequiredError, SourceAssessment, validate_assessment
+from rss_to_wp.editorial import (
+    DraftRequiredError,
+    SourceAssessment,
+    SourceIssue,
+    validate_assessment,
+)
 from rss_to_wp.images.downloader import download_image, featured_size
 from rss_to_wp.images.rss_extractor import find_rss_images
 from rss_to_wp.rewriter.openai_client import OpenAIRewriter
@@ -80,7 +85,9 @@ def test_uncertainty_routes_to_draft_not_publication(
     wp, writer = setup_pipeline(monkeypatch, article, review, context, image_bytes)
     if where == "source":
         reading = assessment_for(article, route="continue")
-        reading.image_readings[0].uncertainties = ["Small-print email is ambiguous"]
+        reading.image_readings[0].uncertainties = [
+            SourceIssue(detail="Small-print email is ambiguous", blocks_publication=True)
+        ]
         writer.assess_source.side_effect = None
         writer.assess_source.return_value = reading
     else:
