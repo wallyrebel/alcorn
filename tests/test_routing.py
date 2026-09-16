@@ -36,6 +36,7 @@ def assessment_for(article, *, route="draft", image_count=1):
             for i in range(1, image_count + 1)
         ],
         uncertainties=[],
+        omitted_details=[],
     )
 
 
@@ -51,7 +52,7 @@ def test_image_only_notice_is_assessed_and_saved_as_draft(
     assert len(writer.assess_source.call_args.args[3]) == 1
     wp.create_editorial_draft.assert_called_once()
     writer.rewrite.assert_not_called()
-    wp.upload_media.assert_not_called()
+    wp.upload_media.assert_called_once()
     wp.create_post.assert_not_called()
 
 
@@ -88,7 +89,7 @@ def test_uncertainty_routes_to_draft_not_publication(
     assert result["status"] == "draft"
     wp.create_editorial_draft.assert_called_once()
     wp.create_post.assert_not_called()
-    wp.upload_media.assert_not_called()
+    wp.upload_media.assert_called_once()
 
 
 def test_source_graphic_readability_and_featured_size_are_separate(monkeypatch):
@@ -209,6 +210,10 @@ def hold(wp, assessment):
         issues=["Confirm opening date and supply a featured image"],
         source_images=["https://example.test/original.jpg"],
         source_published_at="2026-09-15T12:00:00-05:00",
+        prepared_copy={
+            "headline": assessment.headline,
+            "sections": [{"source_id": 1, "heading": "", "paragraphs": [assessment.summary]}],
+        },
     )
 
 
@@ -220,7 +225,9 @@ def test_wordpress_hold_is_verified_draft_with_exact_author(article, review, con
     assert len(writes) == 1
     payload = writes[0].kwargs["json"]
     assert payload["status"] == "draft" and payload["author"] == 1
-    assert "Editorial review required" in payload["content"]
+    assert "Editorial review required" not in payload["content"]
+    assert "Confirm opening date" not in payload["content"]
+    assert not payload["title"].startswith("[Review]")
     assert "editorial-hold:v1:" in payload["content"]
     assert "quality-v1:" not in payload["content"]
     wp._seo_request.assert_not_called()
@@ -310,4 +317,4 @@ def test_unseen_graphics_require_draft_even_if_first_three_look_ignorable(
     validate_assessment(SourceAssessment.model_validate(kwargs["assessment"]), wp.categories, 3)
     writer.rewrite.assert_not_called()
     wp.create_post.assert_not_called()
-    wp.upload_media.assert_not_called()
+    wp.upload_media.assert_called_once()

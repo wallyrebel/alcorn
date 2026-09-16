@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from rss_to_wp.content_policy import ContentRejectedError, plain_text, require_clean_article
 from rss_to_wp.images.pexels import stock_credit
 
-POLICY_VERSION = "quality-v4-roundups"
+POLICY_VERSION = "quality-v5-clean-drafts"
 ALLOWED_CATEGORIES = {
     "alcorn-county-news",
     "corinth-news",
@@ -49,6 +49,73 @@ class SourceAssessment(StrictModel):
     tags: list[str] = Field(max_length=5)
     image_readings: list[ImageReading] = Field(max_length=3)
     uncertainties: list[str] = Field(max_length=10)
+    omitted_details: list[str] = Field(
+        max_length=10,
+        description="Nonessential unknowns that can safely be omitted. Not publication blockers.",
+    )
+
+
+class DraftSection(StrictModel):
+    source_id: int = Field(ge=1, le=12)
+    heading: str = Field(max_length=110)
+    paragraphs: list[str] = Field(min_length=1, max_length=6)
+
+
+class DraftCopy(StrictModel):
+    headline: str = Field(min_length=10, max_length=110)
+    sections: list[DraftSection] = Field(min_length=1, max_length=4)
+
+
+class DraftReview(StrictModel):
+    faithful: bool
+    reader_facing: bool
+    issues: list[str] = Field(max_length=10)
+    optional_suggestions: list[str] = Field(max_length=10)
+    image_id: int = Field(ge=0, le=12)
+    image_alt: str = Field(max_length=250)
+    image_caption: str = Field(max_length=500)
+    image_reason: str = Field(max_length=800)
+
+
+def validate_draft_copy(copy: DraftCopy, source_ids: list[int]):
+    """Drafts may be brief, but never contain source packets or editorial instructions."""
+    if sorted(s.source_id for s in copy.sections) != sorted(source_ids):
+        raise RuntimeError("Draft copy must cover each source exactly once")
+    values = [copy.headline]
+    for section in copy.sections:
+        values.extend([section.heading, *section.paragraphs])
+    for value in values:
+        validate_reader_text(value)
+    if any(not p.strip() for s in copy.sections for p in s.paragraphs):
+        raise RuntimeError("Empty draft paragraph")
+
+
+def validate_reader_text(value: str):
+    if value != plain_text(value) or len(value) > 2500:
+        raise RuntimeError("Draft copy must be bounded plain text")
+    if value.endswith((",", ":", ";", "...", "…")):
+        raise RuntimeError("Draft copy or image metadata is incomplete")
+    if re.search(
+        r"editorial review|working copy|not approved for publication|"
+        r"verify before publish|source publication time|original source graphics|"
+        r"source image \d|supplied (?:RSS|text|image)|\[Review\]|"
+        r"needs? (?:human|editorial) review|\bRSS\b",
+        value,
+        re.I,
+    ):
+        raise RuntimeError("Internal review language cannot appear in draft copy")
+
+
+def draft_presentation_issues(copy: DraftCopy) -> list[str]:
+    """Catch source-packet prose that is factual but not useful article copy."""
+    pattern = re.compile(
+        r"\b(?:graphic|screenshot|chart)\s+(?:titled|show\w*|display\w*|was titled)|"
+        r"\battached tables?\b|\bperiod of record(?: shown|:|\s+\d{4}-)|\bproduct\(s\)|"
+        r"\b(?:supportive work environment|competitive pay)\b|"
+        r"(?:\d{2,3}(?:°[FC])?\s*/){2,}|\(Source:",
+        re.I,
+    )
+    return [p for s in copy.sections for p in s.paragraphs if pattern.search(p)]
 
 
 class DraftRequiredError(ContentRejectedError):

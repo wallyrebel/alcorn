@@ -11,6 +11,7 @@ import pendulum
 from pydantic import Field
 
 from rss_to_wp.content_policy import ContentRejectedError, plain_text, require_usable_source
+from rss_to_wp.drafts import save_editorial_draft
 from rss_to_wp.editorial import (
     POLICY_VERSION,
     DraftRequiredError,
@@ -324,13 +325,6 @@ def _create_roundup(sources, plan, images, context, settings, writer, wp, dry_ru
     except ContentRejectedError as exc:
         if budget.get("drafts", 0) >= settings.max_drafts_per_run:
             return {"skipped": True, "reason": "draft_budget_exhausted"}
-        if dry_run:
-            return {
-                "preview": True,
-                "intended_status": "draft",
-                "reason": str(exc),
-                "sources": sources,
-            }
         categories = list(
             dict.fromkeys(c for s in sources for c in s["assessment"]["category_slugs"])
         )[:3]
@@ -344,16 +338,17 @@ def _create_roundup(sources, plan, images, context, settings, writer, wp, dry_ru
             tags=[],
             image_readings=[],
             uncertainties=[],
+            omitted_details=[],
         )
         return {
-            **wp.create_editorial_draft(
+            **save_editorial_draft(
+                writer=writer,
+                wp=wp,
+                dry_run=dry_run,
+                sources=sources,
+                images=images,
                 assessment=assessment.model_dump(),
-                source_url=sources[0]["source_url"],
-                source_name=sources[0]["source_name"],
                 issues=[str(exc)],
-                source_images=[],
-                source_published_at=sources[0]["source_published_at"],
-                roundup_sources=sources,
             ),
             "reason": str(exc),
         }

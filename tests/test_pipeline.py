@@ -33,6 +33,29 @@ def setup_pipeline(monkeypatch, article, review, context, image_bytes):
         "status": "publish",
     }
     writer = Mock()
+    writer.prepare_editorial_draft.side_effect = lambda sources, images: {
+        "copy": {
+            "headline": article["headline"],
+            "sections": [
+                {
+                    "source_id": s["source_id"],
+                    "heading": s["assessment"]["headline"],
+                    "paragraphs": [s["assessment"]["summary"]],
+                }
+                for s in sources
+            ],
+        },
+        "review": {
+            "faithful": True,
+            "reader_facing": True,
+            "optional_suggestions": [],
+            "issues": [],
+            "image_id": 1 if images else 0,
+            "image_alt": review["image_alt"],
+            "image_caption": review["image_caption"],
+            "image_reason": "Relevant source photograph",
+        },
+    }
     writer.rewrite.return_value = article | {"review": review}
     writer.assess_source.side_effect = lambda title, content, context, images: SourceAssessment(
         route="continue",
@@ -46,6 +69,7 @@ def setup_pipeline(monkeypatch, article, review, context, image_bytes):
             {"image_id": i, "facts": [], "uncertainties": []} for i in range(1, len(images) + 1)
         ],
         uncertainties=[],
+        omitted_details=[],
     )
     wp.create_editorial_draft.return_value = {
         "id": 789,

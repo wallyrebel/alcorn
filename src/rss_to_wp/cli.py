@@ -21,6 +21,7 @@ from rss_to_wp.config import (
     load_feeds_config,
 )
 from rss_to_wp.content_policy import ContentRejectedError, plain_text, require_usable_source
+from rss_to_wp.drafts import save_editorial_draft
 from rss_to_wp.editorial import (
     POLICY_VERSION,
     BriefTooShortError,
@@ -318,22 +319,25 @@ def process_entry(
         if budget.get("drafts", 0) >= settings.max_drafts_per_run:
             return {"skipped": True, "reason": "draft_budget_exhausted", **audit}
         issues = list(dict.fromkeys([reason, *assessment_issues(assessment)]))
-        if dry_run:
-            return {
-                "preview": True,
-                "intended_status": "draft",
-                "reason": reason,
-                "assessment": assessment.model_dump(),
-                "review_issues": issues,
-                **audit,
-            }
-        draft = wp_client.create_editorial_draft(
+        draft = save_editorial_draft(
+            writer=rewriter,
+            wp=wp_client,
+            dry_run=dry_run,
+            sources=[
+                {
+                    "source_id": 1,
+                    "source_url": link,
+                    "source_name": feed_config.source_name,
+                    "source_published_at": context["source_published_at"],
+                    "title": title,
+                    "content": plain_text(content),
+                    "assessment": assessment.model_dump(),
+                    "image_urls": [i["url"] for i in source_images],
+                }
+            ],
+            images=[{**i, "source_id": 1} for i in source_images],
             assessment=assessment.model_dump(),
-            source_url=link,
-            source_name=feed_config.source_name,
             issues=issues,
-            source_images=[i["url"] for i in source_images],
-            source_published_at=context["source_published_at"],
         )
         return {**draft, "reason": reason, "assessment": assessment.model_dump(), **audit}
 

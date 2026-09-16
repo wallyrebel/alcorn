@@ -412,11 +412,13 @@ def test_roundup_failures_cannot_publish_or_lose_sources(
         pool, [feed_config], settings, store, writer, wp, False, 48, budget, decisions
     )
     wp.create_post.assert_not_called()
-    wp.upload_media.assert_not_called()
     if failure == "review":
+        # These fixtures contain no original images; their normal featured picker is mocked.
+        wp.upload_media.assert_not_called()
         assert result == (1, 0, 0) and budget["drafts"] == 1
         assert len(wp.create_editorial_draft.call_args.kwargs["roundup_sources"]) == 3
     else:
+        wp.upload_media.assert_not_called()
         assert store.get_processed_count() == 0
         assert len(store.load_roundup_candidates()) >= 2
         wp.create_editorial_draft.assert_not_called()
@@ -553,7 +555,7 @@ def test_four_distinct_sources_each_get_a_section_and_link(article, review, feed
 def test_failed_roundup_draft_contains_all_sources_and_cannot_auto_resume(
     article, review, feed_config, context
 ):
-    sources = sources_for(article, feed_config)
+    sources = [{**s, "source_id": i} for i, s in enumerate(sources_for(article, feed_config), 1)]
     wp = client_fixture(article, review, context)
     assessment = assessment_for(article, route="draft", image_count=0)
     result = wp.create_editorial_draft(
@@ -564,6 +566,17 @@ def test_failed_roundup_draft_contains_all_sources_and_cannot_auto_resume(
         source_images=[],
         source_published_at=sources[0]["source_published_at"],
         roundup_sources=sources,
+        prepared_copy={
+            "headline": assessment.headline,
+            "sections": [
+                {
+                    "source_id": s["source_id"],
+                    "heading": s["assessment"]["headline"],
+                    "paragraphs": [s["assessment"]["summary"]],
+                }
+                for s in sources
+            ],
+        },
     )
     assert result["status"] == "draft"
     payload = next(

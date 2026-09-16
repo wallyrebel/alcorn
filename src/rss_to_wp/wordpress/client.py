@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from rss_to_wp.content_policy import ContentRejectedError, plain_text
 from rss_to_wp.editorial import (
     ALLOWED_CATEGORIES,
+    DraftCopy,
     Review,
     RoundupReview,
     SourceAssessment,
@@ -24,6 +25,7 @@ from rss_to_wp.editorial import (
     similar_story,
     validate_article,
     validate_assessment,
+    validate_draft_copy,
 )
 from rss_to_wp.wordpress.media import wp_upload_media
 
@@ -258,6 +260,10 @@ class WordPressClient:
         source_images,
         source_published_at,
         roundup_sources=None,
+        prepared_copy,
+        featured_media_id=0,
+        image_alt="",
+        replace_existing=None,
     ):
         """Human review queue: this path can never set publish or resume an auto draft."""
         assessment = SourceAssessment.model_validate(assessment)
@@ -269,50 +275,45 @@ class WordPressClient:
         if author["name"] != self.author_name:
             raise RuntimeError("Exact draft byline verification failed")
         # Includes human drafts, existing holds and public posts. Never overwrite any.
-        sources = roundup_sources or [{"source_url": source_url}]
+        sources = roundup_sources or [
+            {"source_id": 1, "source_url": source_url, "source_name": source_name}
+        ]
         if roundup_sources and not 3 <= len(roundup_sources) <= 4:
             raise RuntimeError("Invalid roundup draft source count")
-        if any(self.find_source_posts(s["source_url"]) for s in sources):
+        target_id = replace_existing["id"] if replace_existing else None
+        if any(
+            p["id"] != target_id for s in sources for p in self.find_source_posts(s["source_url"])
+        ):
             return {"duplicate": True, "reason": "source_already_in_wordpress"}
         marker = hashlib.sha256(source_url.encode()).hexdigest()[:12]
         slug = "editorial-review-" + marker
-        if self.check_duplicate_by_slug(slug):
+        if not target_id and self.check_duplicate_by_slug(slug):
             raise RuntimeError("Conflicting review draft slug")
-        notes = list(dict.fromkeys([assessment.reason, *issues]))
-        content = "<h2>Editorial review required — not approved for publication</h2><ul>"
-        content += "".join(f"<li>{escape(note)}</li>" for note in notes)
-        content += "</ul><h2>Working copy — verify before publishing</h2>"
-        content += f"<p>{escape(assessment.summary)}</p>"
-        content += (
-            f'<p>Source: <a href="{escape(source_url, quote=True)}">{escape(source_name)}</a>.</p>'
-        )
-        content += f"<p>Source publication time: {escape(source_published_at)}</p>"
-        if roundup_sources:
-            for source in roundup_sources:
-                content += f"<h3>{escape(source['assessment']['headline'])}</h3>"
-                content += f"<p>{escape(source['assessment']['summary'])}</p>"
-                content += (
-                    f'<p>Source: <a href="{escape(canonical_url(source["source_url"]), quote=True)}">'
-                    f"{escape(source['source_name'])}</a>. Published: "
-                    f"{escape(source['source_published_at'])}</p>"
-                )
-                for index, url in enumerate(source.get("image_urls", []), 1):
-                    if urlsplit(url).scheme not in {"http", "https"}:
-                        raise RuntimeError("Invalid source image link")
-                    content += (
-                        f'<p><a href="{escape(url, quote=True)}">Original graphic {index}</a></p>'
-                    )
-        if source_images:
-            content += "<h2>Original source graphics</h2><ul>"
-            for index, url in enumerate(source_images, 1):
-                if urlsplit(url).scheme not in {"http", "https"}:
-                    raise RuntimeError("Invalid source image link")
-                content += f'<li><a href="{escape(url, quote=True)}">Source image {index}</a></li>'
-            content += "</ul>"
+        copy = DraftCopy.model_validate(prepared_copy)
+        validate_draft_copy(copy, [s["source_id"] for s in sources])
+        content = ""
+        for section in copy.sections:
+            source = next(s for s in sources if s["source_id"] == section.source_id)
+            if len(sources) > 1:
+                content += f"<h2>{escape(section.heading)}</h2>"
+            content += "".join(f"<p>{escape(p)}</p>" for p in section.paragraphs)
+            content += (
+                f'<p>Source: <a href="{escape(canonical_url(source["source_url"]), quote=True)}">'
+                f"{escape(source['source_name'])}</a>.</p>"
+            )
+        if featured_media_id:
+            media = self._request("GET", f"media/{featured_media_id}")
+            details = media.get("media_details", {})
+            if (
+                not image_alt
+                or media.get("alt_text") != image_alt
+                or min(details.get("width", 0), details.get("height", 0)) < 200
+            ):
+                raise RuntimeError("Draft featured image verification failed")
         # This marker intentionally differs from the auto-resumable quality-v1 marker.
         content += f"<!-- rss-to-wp:editorial-hold:v1:{marker} -->"
         payload = {
-            "title": "[Review] " + plain_text(assessment.headline),
+            "title": copy.headline,
             "content": content,
             "excerpt": "",
             "status": "draft",
@@ -322,10 +323,29 @@ class WordPressClient:
                 next(c["id"] for c in self.categories if c["slug"] == s)
                 for s in assessment.category_slugs
             ],
-            "tags": self.get_or_create_tags(assessment.tags) if assessment.tags else [],
-            "featured_media": 0,
+            "tags": self.get_or_create_tags(
+                [t for t in assessment.tags if t.casefold() in plain_text(content).casefold()]
+            )
+            if assessment.tags
+            else [],
+            "featured_media": featured_media_id,
         }
-        created = self._request("POST", "posts", json=payload)
+        if target_id:
+            # Explicit repair only: never touch a public, human, changed or unrelated draft.
+            actual = self._request("GET", f"posts/{target_id}", params={"context": "edit"})
+            if (
+                actual["status"] != "draft"
+                or actual.get("author") != self.author_id
+                or f"<!-- rss-to-wp:editorial-hold:v1:{marker} -->"
+                not in self._raw(actual, "content")
+                or actual.get("modified_gmt") != replace_existing.get("modified_gmt")
+                or self._raw(actual, "content") != self._raw(replace_existing, "content")
+            ):
+                raise RuntimeError("Draft changed or is not an owned review hold; repair stopped")
+            payload["slug"] = actual["slug"]
+        created = self._request(
+            "POST", f"posts/{target_id}" if target_id else "posts", json=payload
+        )
         verified = self._request("GET", f"posts/{created['id']}", params={"context": "edit"})
         for key in ("status", "author", "slug", "featured_media"):
             if verified.get(key) != payload[key]:
