@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 import pendulum
 import typer
@@ -21,7 +22,14 @@ from rss_to_wp.config import (
     load_feeds_config,
 )
 from rss_to_wp.content_policy import ContentRejectedError, plain_text, require_usable_source
-from rss_to_wp.editorial import canonical_url, fingerprint, render_content, similar_story
+from rss_to_wp.editorial import (
+    DraftRequiredError,
+    assessment_issues,
+    canonical_url,
+    fingerprint,
+    render_content,
+    similar_story,
+)
 from rss_to_wp.feeds import (
     generate_entry_key,
     get_entry_content,
@@ -31,8 +39,10 @@ from rss_to_wp.feeds import (
     pick_entries,
 )
 from rss_to_wp.feeds.filter import parse_entry_date
-from rss_to_wp.images import download_image, find_rss_image
+from rss_to_wp.images import download_image
+from rss_to_wp.images.downloader import featured_size
 from rss_to_wp.images.pexels import PexelsClient, stock_credit
+from rss_to_wp.images.rss_extractor import find_rss_images
 from rss_to_wp.local_categories import additional_local_categories
 from rss_to_wp.rewriter import OpenAIRewriter
 from rss_to_wp.storage import DedupeStore
@@ -83,7 +93,7 @@ def run(
         settings.openai_api_key, settings.openai_model, review_model=settings.openai_review_model
     )
     store = DedupeStore()
-    budget = {"candidates": 0, "posts": 0}
+    budget = {"candidates": 0, "posts": 0, "drafts": 0}
     report = {
         "version": __version__,
         "dry_run": dry_run,
@@ -122,7 +132,14 @@ def run(
                 counts = (0, 0, 1)
             totals = [a + b for a, b in zip(totals, counts)]
     finally:
-        report.update(processed=totals[0], skipped=totals[1], errors=totals[2], budget=budget)
+        report.update(
+            processed=totals[0],
+            published=budget["posts"],
+            drafts=budget.get("drafts", 0),
+            skipped=totals[1],
+            errors=totals[2],
+            budget=budget,
+        )
         path = get_data_dir() / ("dry-run-report.json" if dry_run else "run-report.json")
         path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         logger.info(
@@ -181,7 +198,14 @@ def process_feed(
         title, content = get_entry_title(entry), get_entry_content(entry)
         source_url = get_entry_link(entry) or ""
         decision = {"feed": feed_config.name, "source_url": source_url, "source_title": title}
-        fp = fingerprint(title, content + feed_config.source_name + str(entry.get("published", "")))
+        image_identity = "|".join(
+            (urlsplit(url).hostname or "") + urlsplit(url).path
+            for url in find_rss_images(entry, base_url=source_url)
+        )
+        fp = fingerprint(
+            title,
+            content + feed_config.source_name + str(entry.get("published", "")) + image_identity,
+        )
         try:
             key = generate_entry_key(entry, feed_config.url)
             if dedupe_store.is_processed(key) or dedupe_store.source_seen(source_url):
@@ -211,7 +235,11 @@ def process_feed(
                     dedupe_store.record_rejection(fp, result["reason"])
             else:
                 processed += 1
-                budget["posts"] += 1
+                outcome = result.get("intended_status") if dry_run else result.get("status")
+                if outcome == "draft":
+                    budget["drafts"] = budget.get("drafts", 0) + 1
+                else:
+                    budget["posts"] += 1
                 if not dry_run:
                     dedupe_store.mark_processed(
                         key,
@@ -234,12 +262,45 @@ def process_entry(
 ):
     title, content = get_entry_title(entry), get_entry_content(entry)
     budget = budget if budget is not None else {"candidates": 0, "posts": 0}
+    assessment = None
+    source_images = []
+    context = {}
+    audit = {
+        "source_words": len(plain_text(content).split()),
+        "source_text": plain_text(content)[:18000],
+    }
+
+    def hold(reason):
+        if budget.get("drafts", 0) >= settings.max_drafts_per_run:
+            return {"skipped": True, "reason": "draft_budget_exhausted", **audit}
+        issues = list(dict.fromkeys([reason, *assessment_issues(assessment)]))
+        if dry_run:
+            return {
+                "preview": True,
+                "intended_status": "draft",
+                "reason": reason,
+                "assessment": assessment.model_dump(),
+                "review_issues": issues,
+                **audit,
+            }
+        draft = wp_client.create_editorial_draft(
+            assessment=assessment.model_dump(),
+            source_url=link,
+            source_name=feed_config.source_name,
+            issues=issues,
+            source_images=[i["url"] for i in source_images],
+            source_published_at=context["source_published_at"],
+        )
+        return {**draft, "reason": reason, "assessment": assessment.model_dump(), **audit}
+
     try:
         other_fields = [entry.get("summary", ""), entry.get("description", "")]
         other_fields.extend(item.get("value", "") for item in entry.get("content", []))
-        require_usable_source(title, content, *other_fields)
-        if len(plain_text(content).split()) < settings.min_source_words:
-            raise ContentRejectedError("source_too_thin")
+        try:
+            require_usable_source(title, content, *other_fields)
+        except ContentRejectedError as exc:
+            if str(exc) != "empty_source" or not find_rss_images(entry):
+                raise
         if not feed_config.source_name or not feed_config.primary_source:
             raise ContentRejectedError("unverified_source_identity")
         link = canonical_url(get_entry_link(entry) or "")
@@ -251,13 +312,15 @@ def process_entry(
         related = wp_client.related_candidates(title, content, source_name=feed_config.source_name)
         if any(similar_story(title, p["title"]) for p in related):
             return {"duplicate": True, "reason": "story_already_covered"}
-        image_url = find_rss_image(entry, base_url=link)
-        image_result = download_image(image_url) if image_url else None
-        image_credit = None
-        if not image_result and not settings.pexels_api_key:
-            # A CDN outage or new API key can recover; do not cache this rejection.
-            return {"skipped": True, "reason": "no_usable_source_image_or_pexels_key"}
+        image_urls = find_rss_images(entry, base_url=link)
+        # Count each evaluated source once, including short and image-only notices.
         budget["candidates"] += 1
+        for url in image_urls[:3]:
+            downloaded = download_image(url, min_width=200, min_height=200)
+            if not downloaded:
+                # Never cache a CDN/read failure as proof the source lacks value.
+                raise RuntimeError("Source graphic unavailable for assessment; retry later")
+            source_images.append({"url": url, "bytes": downloaded[0]})
         context = {
             "source_name": feed_config.source_name,
             "source_url": link,
@@ -267,46 +330,100 @@ def process_entry(
             "current_time": pendulum.now(settings.timezone).isoformat(),
             "categories": wp_client.categories,
             "related_posts": related,
+            "source_image_overflow": len(image_urls) > 3,
             "source_local_category_ids": additional_local_categories(
                 settings.wordpress_base_url, title, content
             ),
         }
-        if not image_result:
-            plan = rewriter.plan_stock_image(title, content, context)
+        assessment = rewriter.assess_source(title, content, context, source_images)
+        audit["assessment"] = assessment.model_dump()
+        if len(image_urls) > 3:
+            # Do not assert no news value or completeness when not all evidence was read.
+            if assessment.route == "reject":
+                assessment = assessment.model_copy(
+                    update={
+                        "route": "draft",
+                        "reason": "Additional source graphics need human inspection",
+                        "headline": assessment.headline
+                        or plain_text(title)[:110]
+                        or "Source graphics need review",
+                        "summary": assessment.summary
+                        or "More than three source graphics were attached. Review the original post before deciding whether this information warrants coverage.",
+                        "category_slugs": assessment.category_slugs
+                        or [
+                            next(
+                                (
+                                    c["slug"]
+                                    for c in wp_client.categories
+                                    if c["slug"] == "local-news"
+                                ),
+                                wp_client.categories[0]["slug"],
+                            )
+                        ],
+                        "tags": [],
+                    }
+                )
+                audit["assessment"] = assessment.model_dump()
+            return hold("Additional source graphics exceed the automatic review limit")
+        if assessment.route == "reject":
+            raise ContentRejectedError("no_real_news_value: " + assessment.reason)
+        if assessment.route == "draft" or assessment_issues(assessment):
+            return hold(assessment.reason)
+        context["source_assessment"] = assessment.model_dump()
+        image_credit = None
+        chosen_source = next((i for i in source_images if featured_size(i["bytes"])), None)
+        if chosen_source:
+            image_bytes, image_url = chosen_source["bytes"], chosen_source["url"]
+            context["image_provenance"] = {"kind": "source", "url": image_url}
+        else:
+            if not settings.pexels_api_key:
+                return hold("A suitable featured image of at least 1200 by 600 pixels is needed")
+            evidence_text = (
+                plain_text(content)
+                + " "
+                + " ".join(f for r in assessment.image_readings for f in r.facts)
+            )
+            try:
+                plan = rewriter.plan_stock_image(title, evidence_text, context)
+            except ContentRejectedError as exc:
+                return hold("Featured image required: " + str(exc))
             photos = PexelsClient(settings.pexels_api_key).search(plan.query)
             candidates = []
             for photo in photos:
                 downloaded = download_image(photo["url"], allowed_hosts={"images.pexels.com"})
                 if downloaded:
                     candidates.append({"photo": photo, "bytes": downloaded[0]})
-            selected = rewriter.select_stock_image(title, content, plan, candidates)
+            selected = rewriter.select_stock_image(title, evidence_text, plan, candidates)
             if not selected:
-                return {"skipped": True, "reason": "no_suitable_pexels_illustration"}
+                return hold("No suitable Pexels illustration; supply an appropriate featured image")
             image_credit, image_bytes = selected["photo"], selected["bytes"]
             image_url = image_credit["url"]
             context["image_provenance"] = {"kind": "pexels_stock", **image_credit}
-        else:
-            image_bytes = image_result[0]
-            context["image_provenance"] = {"kind": "source", "url": image_url}
-        article = rewriter.rewrite(
-            content,
-            title,
-            feed_config.use_original_title,
-            context=context,
-            image_bytes=image_bytes,
-            min_source_words=settings.min_source_words,
-            min_article_words=settings.min_article_words,
-            min_quality_score=settings.min_quality_score,
-        )
+        try:
+            article = rewriter.rewrite(
+                content,
+                title,
+                feed_config.use_original_title,
+                context=context,
+                image_bytes=image_bytes,
+                source_images=source_images,
+                min_source_words=settings.min_source_words,
+                min_article_words=settings.min_article_words,
+                min_quality_score=settings.min_quality_score,
+            )
+        except DraftRequiredError as exc:
+            return hold(str(exc))
         if dry_run:
             return {
                 "preview": True,
+                "intended_status": settings.wordpress_post_status,
                 "article": article,
                 "image_url": image_url,
                 "image_credit": image_credit,
                 "content": render_content(
                     article, link, feed_config.source_name, related, image_credit
                 ),
+                **audit,
             }
         caption = escape(article["review"]["image_caption"])
         caption += (
@@ -329,10 +446,10 @@ def process_entry(
             featured_media_id=media_id,
             image_credit=image_credit,
         )
-        return {k: post[k] for k in ("id", "link", "status", "duplicate") if k in post}
+        return {**{k: post[k] for k in ("id", "link", "status", "duplicate") if k in post}, **audit}
     except ContentRejectedError as exc:
         logger.info("content_rejected", title=title[:80], reason=str(exc))
-        return {"skipped": True, "reason": str(exc), "cache_rejection": True}
+        return {"skipped": True, "reason": str(exc), "cache_rejection": True, **audit}
 
 
 @app.command()

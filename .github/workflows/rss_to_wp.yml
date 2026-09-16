@@ -56,6 +56,7 @@ jobs:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           MAX_CANDIDATES_PER_RUN: '6'
           MAX_POSTS_PER_RUN: '5'
+          MAX_DRAFTS_PER_RUN: '3'
           WORDPRESS_BASE_URL: ${{ secrets.WORDPRESS_BASE_URL }}
           WORDPRESS_USERNAME: ${{ secrets.WORDPRESS_USERNAME }}
           WORDPRESS_APP_PASSWORD: ${{ secrets.WORDPRESS_APP_PASSWORD }}

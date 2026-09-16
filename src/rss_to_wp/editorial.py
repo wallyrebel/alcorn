@@ -6,6 +6,7 @@ import hashlib
 import re
 from difflib import SequenceMatcher
 from html import escape
+from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup
@@ -14,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from rss_to_wp.content_policy import ContentRejectedError, plain_text, require_clean_article
 from rss_to_wp.images.pexels import stock_credit
 
-POLICY_VERSION = "quality-v2-pexels"
+POLICY_VERSION = "quality-v3-editorial-routing"
 ALLOWED_CATEGORIES = {
     "alcorn-county-news",
     "corinth-news",
@@ -30,6 +31,60 @@ ALLOWED_CATEGORIES = {
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class ImageReading(StrictModel):
+    image_id: int = Field(ge=1, le=3)
+    facts: list[str] = Field(max_length=15)
+    uncertainties: list[str] = Field(max_length=10)
+
+
+class SourceAssessment(StrictModel):
+    route: Literal["continue", "draft", "reject"]
+    reason: str = Field(min_length=5, max_length=800)
+    headline: str = Field(max_length=110)
+    summary: str = Field(max_length=2400)
+    category_slugs: list[str] = Field(max_length=3)
+    tags: list[str] = Field(max_length=5)
+    image_readings: list[ImageReading] = Field(max_length=3)
+    uncertainties: list[str] = Field(max_length=10)
+
+
+class DraftRequiredError(ContentRejectedError):
+    """A useful source needs a human decision, never automatic publication."""
+
+
+def validate_assessment(assessment: SourceAssessment, categories: list[dict], image_count: int):
+    ids = [r.image_id for r in assessment.image_readings]
+    if sorted(ids) != list(range(1, image_count + 1)):
+        raise RuntimeError("Source image assessment incomplete; no editorial decision saved")
+    if assessment.route == "reject":
+        return
+    if not assessment.headline or not assessment.summary:
+        raise RuntimeError("Useful source assessment needs a headline and working summary")
+    allowed = {c["slug"] for c in categories} & ALLOWED_CATEGORIES
+    if not assessment.category_slugs or not set(assessment.category_slugs) <= allowed:
+        raise RuntimeError("Invalid source assessment categories")
+    if len(set(assessment.category_slugs)) != len(assessment.category_slugs):
+        raise RuntimeError("Duplicate source assessment categories")
+    if len({t.casefold() for t in assessment.tags}) != len(assessment.tags):
+        raise RuntimeError("Duplicate source assessment tags")
+    for tag in assessment.tags:
+        if (
+            not 3 <= len(tag) <= 60
+            or tag != plain_text(tag)
+            or tag.casefold() not in assessment.summary.casefold()
+        ):
+            raise RuntimeError("Unsupported source assessment tag")
+
+
+def assessment_issues(assessment: SourceAssessment) -> list[str]:
+    return list(
+        dict.fromkeys(
+            assessment.uncertainties
+            + [issue for reading in assessment.image_readings for issue in reading.uncertainties]
+        )
+    )
 
 
 class ArticleMetadata(StrictModel):
@@ -104,7 +159,14 @@ def canonical_url(url: str) -> str:
 
 
 def fingerprint(title: str, content: str) -> str:
-    return hashlib.sha256((POLICY_VERSION + plain_text(title + " " + content)).encode()).hexdigest()
+    # Signed CDN query strings rotate; image paths identify changed source graphics.
+    images = [
+        urlsplit(img.get("src", "")).path
+        for img in BeautifulSoup(content, "html.parser").find_all("img")
+    ]
+    return hashlib.sha256(
+        (POLICY_VERSION + plain_text(title + " " + content) + "|".join(images)).encode()
+    ).hexdigest()
 
 
 def similar_story(left: str, right: str) -> bool:

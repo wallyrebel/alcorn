@@ -70,6 +70,46 @@ def is_valid_image_url(url: str) -> bool:
         return False
 
 
+def find_rss_images(entry: dict[str, Any], base_url: str = "", limit: int = 4) -> list[str]:
+    """Collect distinct source graphics, including image-only/multi-image posts."""
+    urls = []
+    for key in ("media_content", "enclosures", "links"):
+        for item in entry.get(key, []):
+            url = item.get("url") or item.get("href", "")
+            if (
+                item.get("medium") == "video"
+                or item.get("type", "").startswith("video/")
+                or urlparse(url).path.lower().endswith((".mp4", ".mov", ".webm"))
+            ):
+                continue
+            if is_valid_image_url(url):
+                urls.append(url)
+    fields = [c.get("value", "") for c in entry.get("content", [])]
+    fields += [entry.get("summary", ""), entry.get("description", "")]
+    for html in fields:
+        for img in BeautifulSoup(html, "html.parser").find_all("img"):
+            url = urljoin(base_url, img.get("src", ""))
+            if is_valid_image_url(url) and not any(
+                p in url.lower() for p in ("pixel", "spacer", "1x1", "gravatar", "avatar")
+            ):
+                urls.append(url)
+    if not urls:
+        urls = [
+            t.get("url", "")
+            for t in entry.get("media_thumbnail", [])
+            if is_valid_image_url(t.get("url", ""))
+        ]
+    # The same photo often occurs as an enclosure, inline image and thumbnail.
+    found, identities = [], set()
+    for url in urls:
+        parsed = urlparse(url)
+        identity = (parsed.hostname, parsed.path)
+        if identity not in identities:
+            found.append(url)
+            identities.add(identity)
+    return found[:limit]
+
+
 def find_rss_image(entry: dict[str, Any], base_url: str = "") -> Optional[str]:
     """Find an image URL from an RSS entry.
 

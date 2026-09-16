@@ -20,6 +20,8 @@ def download_image(
     timeout: tuple[int, int] = (10, 30),
     *,
     allowed_hosts: set[str] | None = None,
+    min_width: int = 1200,
+    min_height: int = 600,
 ) -> Optional[tuple[bytes, str, str]]:
     """Download an image from URL.
 
@@ -81,7 +83,11 @@ def download_image(
             with Image.open(BytesIO(content)) as img:
                 img = ImageOps.exif_transpose(img)
                 # Do not upscale thumbnails or force crops that lose news context.
-                if img.width < 1200 or img.height < 600 or img.width * img.height > 40_000_000:
+                if (
+                    img.width < min_width
+                    or img.height < min_height
+                    or img.width * img.height > 40_000_000
+                ):
                     logger.warning("image_dimensions_rejected", width=img.width, height=img.height)
                     return None
                 img.thumbnail((2400, 2400))
@@ -111,3 +117,8 @@ def download_image(
     except Exception as e:
         logger.error("image_download_error", url=url, error=str(e))
         return None
+
+
+def featured_size(image_bytes: bytes) -> bool:
+    with Image.open(BytesIO(image_bytes)) as img:
+        return img.width >= 1200 and img.height >= 600

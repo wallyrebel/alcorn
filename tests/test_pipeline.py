@@ -7,7 +7,8 @@ import pytest
 from PIL import Image
 
 from rss_to_wp import cli
-from rss_to_wp.editorial import fingerprint
+from rss_to_wp.content_policy import plain_text
+from rss_to_wp.editorial import SourceAssessment, fingerprint
 from rss_to_wp.images.downloader import download_image
 from rss_to_wp.storage import DedupeStore
 
@@ -33,7 +34,26 @@ def setup_pipeline(monkeypatch, article, review, context, image_bytes):
     }
     writer = Mock()
     writer.rewrite.return_value = article | {"review": review}
-    monkeypatch.setattr(cli, "find_rss_image", Mock(return_value="https://example.test/photo.jpg"))
+    writer.assess_source.side_effect = lambda title, content, context, images: SourceAssessment(
+        route="continue",
+        reason="Substantial local service news",
+        headline=article["headline"],
+        summary=plain_text(article["body"]),
+        category_slugs=article["category_slugs"],
+        tags=article["tags"],
+        image_readings=[
+            {"image_id": i, "facts": [], "uncertainties": []} for i in range(1, len(images) + 1)
+        ],
+        uncertainties=[],
+    )
+    wp.create_editorial_draft.return_value = {
+        "id": 789,
+        "status": "draft",
+        "link": "https://example.test/wp-admin/post.php?post=789&action=edit",
+    }
+    monkeypatch.setattr(
+        cli, "find_rss_images", Mock(return_value=["https://example.test/photo.jpg"])
+    )
     monkeypatch.setattr(
         cli, "download_image", Mock(return_value=(image_bytes, "photo.jpg", "image/jpeg"))
     )
@@ -57,7 +77,7 @@ def test_images_and_duplicates_block_publication(
 ):
     wp, writer = setup_pipeline(monkeypatch, article, review, context, image_bytes)
     if failure == "missing":
-        cli.find_rss_image.return_value = None
+        cli.find_rss_images.return_value = []
     elif failure == "download":
         cli.download_image.return_value = None
     elif failure == "upload":
@@ -68,9 +88,9 @@ def test_images_and_duplicates_block_publication(
         result = cli.process_entry(
             entry_for(article), feed_config, settings, writer, wp, False, Mock()
         )
-        assert result.get("skipped") or result.get("duplicate")
+        assert result.get("skipped") or result.get("duplicate") or result.get("status") == "draft"
     except RuntimeError:
-        assert failure == "upload"
+        assert failure in {"upload", "download"}
     wp.create_post.assert_not_called()
     if failure != "upload":
         writer.rewrite.assert_not_called()

@@ -212,7 +212,7 @@ def test_fallback_selected_image_reaches_final_review_and_credit(
 ):
     settings.pexels_api_key = "unused"
     wp, writer = setup_pipeline(monkeypatch, article, review, context, image_bytes)
-    cli.find_rss_image.return_value = None
+    cli.find_rss_images.return_value = []
     writer.plan_stock_image.return_value = StockPlan(
         eligible=True, query="library books", reason="Service"
     )
@@ -264,7 +264,7 @@ def test_stock_rejection_never_uploads_or_publishes(
 ):
     settings.pexels_api_key = "unused"
     wp, writer = setup_pipeline(monkeypatch, article, review, context, image_bytes)
-    cli.find_rss_image.return_value = None
+    cli.find_rss_images.return_value = []
     writer.plan_stock_image.return_value = StockPlan(
         eligible=True, query="library books", reason="Service"
     )
@@ -276,7 +276,7 @@ def test_stock_rejection_never_uploads_or_publishes(
     )
     writer.rewrite.side_effect = ContentRejectedError("image misrepresents local facility")
     result = cli.process_entry(entry_for(article), feed_config, settings, writer, wp, False, Mock())
-    assert result["skipped"]
+    assert result.get("skipped") or result.get("status") == "draft"
     wp.upload_media.assert_not_called()
     wp.create_post.assert_not_called()
 

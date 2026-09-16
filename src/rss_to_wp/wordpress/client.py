@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from html import escape
 from urllib.parse import urlsplit
 
 import requests
@@ -12,11 +13,13 @@ from rss_to_wp.content_policy import ContentRejectedError, plain_text
 from rss_to_wp.editorial import (
     ALLOWED_CATEGORIES,
     Review,
+    SourceAssessment,
     canonical_url,
     render_content,
     require_approved_review,
     similar_story,
     validate_article,
+    validate_assessment,
 )
 from rss_to_wp.wordpress.media import wp_upload_media
 
@@ -240,6 +243,81 @@ class WordPressClient:
             self.session,
             caption=caption,
         )
+
+    def create_editorial_draft(
+        self,
+        *,
+        assessment,
+        source_url,
+        source_name,
+        issues,
+        source_images,
+        source_published_at,
+    ):
+        """Human review queue: this path can never set publish or resume an auto draft."""
+        assessment = SourceAssessment.model_validate(assessment)
+        validate_assessment(assessment, self.categories, len(source_images))
+        if assessment.route == "reject":
+            raise ContentRejectedError("Rejected sources cannot become drafts")
+        source_url = canonical_url(source_url)
+        author = self._request("GET", f"users/{self.author_id}")
+        if author["name"] != self.author_name:
+            raise RuntimeError("Exact draft byline verification failed")
+        # Includes human drafts, existing holds and public posts. Never overwrite any.
+        if self.find_source_posts(source_url):
+            return {"duplicate": True, "reason": "source_already_in_wordpress"}
+        marker = hashlib.sha256(source_url.encode()).hexdigest()[:12]
+        slug = "editorial-review-" + marker
+        if self.check_duplicate_by_slug(slug):
+            raise RuntimeError("Conflicting review draft slug")
+        notes = list(dict.fromkeys([assessment.reason, *issues]))
+        content = "<h2>Editorial review required — not approved for publication</h2><ul>"
+        content += "".join(f"<li>{escape(note)}</li>" for note in notes)
+        content += "</ul><h2>Working copy — verify before publishing</h2>"
+        content += f"<p>{escape(assessment.summary)}</p>"
+        content += (
+            f'<p>Source: <a href="{escape(source_url, quote=True)}">{escape(source_name)}</a>.</p>'
+        )
+        content += f"<p>Source publication time: {escape(source_published_at)}</p>"
+        if source_images:
+            content += "<h2>Original source graphics</h2><ul>"
+            for index, url in enumerate(source_images, 1):
+                if urlsplit(url).scheme not in {"http", "https"}:
+                    raise RuntimeError("Invalid source image link")
+                content += f'<li><a href="{escape(url, quote=True)}">Source image {index}</a></li>'
+            content += "</ul>"
+        # This marker intentionally differs from the auto-resumable quality-v1 marker.
+        content += f"<!-- rss-to-wp:editorial-hold:v1:{marker} -->"
+        payload = {
+            "title": "[Review] " + plain_text(assessment.headline),
+            "content": content,
+            "excerpt": "",
+            "status": "draft",
+            "author": self.author_id,
+            "slug": slug,
+            "categories": [
+                next(c["id"] for c in self.categories if c["slug"] == s)
+                for s in assessment.category_slugs
+            ],
+            "tags": self.get_or_create_tags(assessment.tags) if assessment.tags else [],
+            "featured_media": 0,
+        }
+        created = self._request("POST", "posts", json=payload)
+        verified = self._request("GET", f"posts/{created['id']}", params={"context": "edit"})
+        for key in ("status", "author", "slug", "featured_media"):
+            if verified.get(key) != payload[key]:
+                raise RuntimeError("Editorial draft verification failed: " + key)
+        for key in ("categories", "tags"):
+            if set(verified.get(key, [])) != set(payload[key]):
+                raise RuntimeError("Editorial draft taxonomy verification failed")
+        for key in ("title", "content"):
+            if self._raw(verified, key).strip() != payload[key].strip():
+                raise RuntimeError("Editorial draft content verification failed")
+        return {
+            "id": verified["id"],
+            "status": "draft",
+            "link": f"{self.base_url}/wp-admin/post.php?post={verified['id']}&action=edit",
+        }
 
     def _seo_request(self, method, post_id, suffix="", **kwargs):
         url = f"{self.base_url}/wp-json/seopress/v1/posts/{post_id}" + (
