@@ -8,7 +8,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 import requests
-from PIL import Image
+from PIL import Image, ImageOps
 
 from rss_to_wp.images.pexels import PexelsClient
 from rss_to_wp.images.unsplash import UnsplashClient
@@ -47,22 +47,43 @@ def download_image(
         content_length = response.headers.get("Content-Length")
         if content_length and int(content_length) > max_size_mb * 1024 * 1024:
             logger.warning("image_too_large", url=url, size_mb=int(content_length) / (1024 * 1024))
+            response.close()
             return None
 
-        # Read content
-        content = response.content
+        # Enforce the limit while streaming, even when Content-Length is absent.
+        chunks = []
+        size = 0
+        try:
+            for chunk in response.iter_content(65536):
+                size += len(chunk)
+                if size > max_size_mb * 1024 * 1024:
+                    return None
+                chunks.append(chunk)
+        finally:
+            response.close()
+        content = b"".join(chunks)
 
         # Validate it's actually an image
         try:
-            img = Image.open(BytesIO(content))
-            img.verify()
+            with Image.open(BytesIO(content)) as img:
+                img.verify()
+            with Image.open(BytesIO(content)) as img:
+                img = ImageOps.exif_transpose(img)
+                # Do not upscale thumbnails or force crops that lose news context.
+                if img.width < 1200 or img.height < 600 or img.width * img.height > 40_000_000:
+                    logger.warning("image_dimensions_rejected", width=img.width, height=img.height)
+                    return None
+                img.thumbnail((2400, 2400))
+                output = BytesIO()
+                img.convert("RGB").save(output, format="JPEG", quality=88, optimize=True)
+                content = output.getvalue()
         except Exception as e:
             logger.warning("invalid_image", url=url, error=str(e))
             return None
 
         # Determine filename and type
-        content_type = response.headers.get("Content-Type", "image/jpeg")
-        filename = _extract_filename(url, content_type)
+        content_type = "image/jpeg"
+        filename = "source-photo.jpg"
 
         logger.info(
             "image_downloaded",

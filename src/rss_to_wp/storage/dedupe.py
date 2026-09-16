@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +27,7 @@ class DedupeStore:
             db_path = get_data_dir() / "processed.db"
 
         self.db_path = db_path
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     def _init_db(self) -> None:
@@ -51,6 +52,12 @@ class DedupeStore:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_feed_url
                 ON processed_entries(feed_url)
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS editorial_decisions (
+                    fingerprint TEXT PRIMARY KEY, reason TEXT NOT NULL,
+                    decided_at TEXT NOT NULL
+                )
             """)
             conn.commit()
 
@@ -120,7 +127,7 @@ class DedupeStore:
                     entry_link,
                     wp_post_id,
                     wp_post_url,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                 ),
             )
             conn.commit()
@@ -130,6 +137,39 @@ class DedupeStore:
             key=entry_key,
             wp_post_id=wp_post_id,
         )
+
+    def rejection_reason(self, fingerprint: str) -> str | None:
+        """Unchanged rejected inputs cool down for 24 hours; repaired sources retry."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT reason FROM editorial_decisions WHERE fingerprint=? AND decided_at>?",
+                (fingerprint, cutoff),
+            ).fetchone()
+        return row["reason"] if row else None
+
+    def record_rejection(self, fingerprint: str, reason: str) -> None:
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO editorial_decisions VALUES (?, ?, ?)",
+                (fingerprint, reason, datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+
+    def source_seen(self, source_url: str) -> bool:
+        from rss_to_wp.editorial import canonical_url
+
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT entry_link FROM processed_entries WHERE entry_link != ''"
+            ).fetchall()
+        for row in rows:
+            try:
+                if canonical_url(row["entry_link"]) == canonical_url(source_url):
+                    return True
+            except ValueError:
+                continue
+        return False
 
     def get_processed_count(self, feed_url: Optional[str] = None) -> int:
         """Get count of processed entries.
@@ -197,6 +237,7 @@ class DedupeStore:
         with self._get_connection() as conn:
             cursor = conn.execute("DELETE FROM processed_entries")
             count = cursor.rowcount
+            conn.execute("DELETE FROM editorial_decisions")
             conn.commit()
 
         logger.warning("database_cleared", deleted_count=count)

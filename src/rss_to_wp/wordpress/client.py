@@ -1,438 +1,376 @@
-"""WordPress REST API client."""
+"""WordPress publishing that stages and verifies every requirement before publication."""
 
 from __future__ import annotations
 
-import re
-import time
-from typing import Optional
+import hashlib
+from urllib.parse import urlsplit
 
 import requests
+from bs4 import BeautifulSoup
 
-from rss_to_wp.content_policy import ContentRejectedError, access_error_reason
-from rss_to_wp.utils import get_logger
+from rss_to_wp.content_policy import ContentRejectedError, plain_text
+from rss_to_wp.editorial import (
+    ALLOWED_CATEGORIES,
+    Review,
+    canonical_url,
+    render_content,
+    require_approved_review,
+    similar_story,
+    validate_article,
+)
 from rss_to_wp.wordpress.media import wp_upload_media
-
-logger = get_logger("wordpress.client")
 
 
 class WordPressClient:
-    """Client for WordPress REST API operations."""
-
     def __init__(
         self,
-        base_url: str,
-        username: str,
-        password: str,
-        default_status: str = "publish",
+        base_url,
+        username,
+        password,
+        default_status="publish",
+        author_id=1,
+        author_name="Jon R Myers",
+        min_quality_score=90,
+        min_article_words=150,
     ):
-        """Initialize WordPress client.
-
-        Args:
-            base_url: WordPress site URL (no trailing slash).
-            username: WordPress username.
-            password: WordPress application password.
-            default_status: Default post status (publish/draft).
-        """
         self.base_url = base_url.rstrip("/")
-        self.username = username
-        self.password = password
+        self.username, self.password = username, password
         self.default_status = default_status
-
+        self.author_id, self.author_name = author_id, author_name
+        self.min_quality_score, self.min_article_words = min_quality_score, min_article_words
         self.session = requests.Session()
         self.session.auth = (username, password)
-        self.session.headers.update(
-            {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            }
-        )
+        self.session.headers.update({"Accept": "application/json"})
+        self.categories = []
+        self.recent_posts = []
+        self._tag_cache = {}
+        self._related_cache = {}
 
-        self._category_cache: dict[str, int] = {}
-        self._tag_cache: dict[str, int] = {}
-        self._last_request_time = 0.0
-
-    def _rate_limit(self) -> None:
-        """Rate limit API calls."""
-        min_interval = 1.0  # 1 second between requests
-        elapsed = time.time() - self._last_request_time
-        if elapsed < min_interval:
-            time.sleep(min_interval - elapsed)
-        self._last_request_time = time.time()
-
-    def _api_url(self, endpoint: str) -> str:
-        """Build full API URL.
-
-        Args:
-            endpoint: API endpoint path.
-
-        Returns:
-            Full URL.
-        """
+    def _api_url(self, endpoint):
         return f"{self.base_url}/wp-json/wp/v2/{endpoint}"
 
-    def check_duplicate_by_slug(self, slug: str) -> bool:
-        """Check if a post with this slug already exists.
+    def _request(self, method, endpoint, **kwargs):
+        # No automatic retries of writes: an ambiguous timeout may have committed.
+        response = self.session.request(method, self._api_url(endpoint), timeout=(10, 45), **kwargs)
+        response.raise_for_status()
+        return response.json()
 
-        Args:
-            slug: Post slug to check.
+    def preflight(self):
+        user = self._request("GET", f"users/{self.author_id}", params={"context": "edit"})
+        if user["name"] != self.author_name:
+            raise RuntimeError("Configured author does not match the exact WordPress byline")
+        self.categories = self._request("GET", "categories", params={"per_page": 100})
+        self.categories = [
+            {k: c[k] for k in ("id", "name", "slug")}
+            for c in self.categories
+            if c["slug"] in ALLOWED_CATEGORIES
+        ]
+        if not self.categories:
+            raise RuntimeError("No approved WordPress categories available")
+        self.recent_posts = self._request(
+            "GET",
+            "posts",
+            params={
+                "per_page": 100,
+                "status": "publish",
+                "orderby": "date",
+                "order": "desc",
+                "_fields": "id,title,content,excerpt,link,date,slug,status,author",
+            },
+        )
+        # SEOPress is mandatory for this site's publishing path.
+        response = self.session.get(f"{self.base_url}/wp-json/", timeout=(10, 30))
+        response.raise_for_status()
+        if "seopress/v1" not in response.json().get("namespaces", []):
+            raise RuntimeError("SEOPress API unavailable; publication blocked")
 
-        Returns:
-            True if exists, False otherwise.
-        """
-        self._rate_limit()
+    @staticmethod
+    def _raw(post, field):
+        value = post.get(field, {})
+        return value.get("raw", value.get("rendered", "")) if isinstance(value, dict) else value
 
-        try:
-            response = self.session.get(
-                self._api_url("posts"),
-                params={"slug": slug, "status": "any"},
-                timeout=(10, 30),
-            )
-            response.raise_for_status()
-            posts = response.json()
-
-            if posts:
-                logger.debug("duplicate_found_by_slug", slug=slug, post_id=posts[0].get("id"))
-                return True
-
-            return False
-
-        except Exception as e:
-            logger.warning("duplicate_check_error", slug=slug, error=str(e))
-            return False  # Assume no duplicate on error
-
-    def check_duplicate_by_source_url(self, source_url: str) -> bool:
-        """Check if a post containing this source URL already exists.
-
-        This is the most reliable duplicate check since the source URL never changes.
-
-        Args:
-            source_url: Original article source URL.
-
-        Returns:
-            True if exists, False otherwise.
-        """
-        if not source_url:
-            return False
-
-        self._rate_limit()
-
-        try:
-            # Search for posts containing the source URL
-            response = self.session.get(
-                self._api_url("posts"),
-                params={
-                    "search": source_url,
-                    "status": "any",
-                    "per_page": 5,
-                },
-                timeout=(10, 30),
-            )
-            response.raise_for_status()
-            posts = response.json()
-
-            # Check if any post actually contains this exact URL
-            for post in posts:
-                content = post.get("content", {}).get("rendered", "")
-                if source_url in content:
-                    logger.info(
-                        "duplicate_found_by_source_url",
-                        source_url=source_url[:60],
-                        post_id=post.get("id"),
-                        post_title=post.get("title", {}).get("rendered", "")[:50],
-                    )
-                    return True
-
-            return False
-
-        except Exception as e:
-            logger.warning("source_url_check_error", source_url=source_url[:60], error=str(e))
-            return False  # Assume no duplicate on error
-
-    def get_or_create_category(self, name: str) -> Optional[int]:
-        """Get category ID, creating it if it doesn't exist.
-
-        Args:
-            name: Category name.
-
-        Returns:
-            Category ID or None.
-        """
-        # Check cache first
-        if name in self._category_cache:
-            return self._category_cache[name]
-
-        self._rate_limit()
-
-        slug = self._slugify(name)
-
-        # Try to find existing
-        try:
-            response = self.session.get(
-                self._api_url("categories"),
-                params={"slug": slug},
-                timeout=(10, 30),
-            )
-            response.raise_for_status()
-            categories = response.json()
-
-            if categories:
-                cat_id = categories[0]["id"]
-                self._category_cache[name] = cat_id
-                return cat_id
-
-        except Exception as e:
-            logger.warning("category_search_error", name=name, error=str(e))
-
-        # Create new category
-        self._rate_limit()
-        try:
-            response = self.session.post(
-                self._api_url("categories"),
-                json={"name": name, "slug": slug},
-                timeout=(10, 30),
-            )
-            response.raise_for_status()
-            cat_data = response.json()
-            cat_id = cat_data["id"]
-            self._category_cache[name] = cat_id
-            logger.info("category_created", name=name, id=cat_id)
-            return cat_id
-
-        except requests.exceptions.HTTPError as e:
-            # Category might exist with different slug
-            if e.response.status_code == 400:
-                logger.warning("category_create_conflict", name=name)
-            else:
-                logger.error("category_create_error", name=name, error=str(e))
-            return None
-        except Exception as e:
-            logger.error("category_create_error", name=name, error=str(e))
-            return None
-
-    def get_or_create_tags(self, names: list[str]) -> list[int]:
-        """Get or create multiple tags.
-
-        Args:
-            names: List of tag names.
-
-        Returns:
-            List of tag IDs.
-        """
-        tag_ids = []
-
-        for name in names:
-            if not name:
-                continue
-
-            # Check cache
-            if name in self._tag_cache:
-                tag_ids.append(self._tag_cache[name])
-                continue
-
-            self._rate_limit()
-            slug = self._slugify(name)
-
-            # Try to find existing
-            try:
-                response = self.session.get(
-                    self._api_url("tags"),
-                    params={"slug": slug},
-                    timeout=(10, 30),
-                )
-                response.raise_for_status()
-                tags = response.json()
-
-                if tags:
-                    tag_id = tags[0]["id"]
-                    self._tag_cache[name] = tag_id
-                    tag_ids.append(tag_id)
+    def find_source_posts(self, source_url):
+        source_url = canonical_url(source_url)
+        parts = urlsplit(source_url)
+        # Search the stable host/path substring so legacy www/http/trailing-slash
+        # variants are found; compare fully canonicalized hrefs below.
+        search = parts.netloc + parts.path
+        posts = self._request(
+            "GET",
+            "posts",
+            params={
+                "search": search,
+                "status": "publish,draft,pending,future,private",
+                "context": "edit",
+                "per_page": 100,
+            },
+        )
+        if len(posts) == 100:
+            raise RuntimeError("Source duplicate search is incomplete; publication blocked")
+        matches = []
+        for post in posts:
+            soup = BeautifulSoup(self._raw(post, "content"), "html.parser")
+            for a in soup.find_all("a", href=True):
+                try:
+                    if canonical_url(a["href"]) == source_url:
+                        matches.append(post)
+                        break
+                except ContentRejectedError:
                     continue
+        return matches
 
-            except Exception as e:
-                logger.warning("tag_search_error", name=name, error=str(e))
+    def check_duplicate_by_source_url(self, source_url):
+        posts = self.find_source_posts(source_url)
+        # Only this tool's own staging drafts may be resumed.
+        return any(not self._is_staging_draft(p, source_url) for p in posts)
 
-            # Create new tag
-            self._rate_limit()
-            try:
-                response = self.session.post(
-                    self._api_url("tags"),
-                    json={"name": name, "slug": slug},
-                    timeout=(10, 30),
-                )
-                response.raise_for_status()
-                tag_data = response.json()
-                tag_id = tag_data["id"]
-                self._tag_cache[name] = tag_id
-                tag_ids.append(tag_id)
-                logger.info("tag_created", name=name, id=tag_id)
-
-            except Exception as e:
-                logger.warning("tag_create_error", name=name, error=str(e))
-
-        return tag_ids
-
-    def _slugify(self, text: str) -> str:
-        """Convert text to URL-safe slug.
-
-        Args:
-            text: Text to slugify.
-
-        Returns:
-            Slug string.
-        """
-        slug = text.lower()
-        slug = re.sub(r"[^\w\s-]", "", slug)
-        slug = re.sub(r"[-\s]+", "-", slug)
-        return slug.strip("-")
-
-    def upload_media(
-        self,
-        image_bytes: bytes,
-        filename: str,
-        alt_text: str = "",
-    ) -> Optional[int]:
-        """Upload image to media library.
-
-        Args:
-            image_bytes: Image content.
-            filename: Filename for upload.
-            alt_text: Alt text for image.
-
-        Returns:
-            Media ID or None.
-        """
-        return wp_upload_media(
-            image_bytes=image_bytes,
-            filename=filename,
-            alt_text=alt_text,
-            base_url=self.base_url,
-            username=self.username,
-            password=self.password,
-            session=self.session,
+    def _is_staging_draft(self, post, source_url):
+        marker = hashlib.sha256(canonical_url(source_url).encode()).hexdigest()[:12]
+        return (
+            post["status"] == "draft"
+            and post.get("author") == self.author_id
+            and f"<!-- rss-to-wp:quality-v1:{marker} -->" in self._raw(post, "content")
         )
 
-    def create_post(
-        self,
-        title: str,
-        content: str,
-        excerpt: str = "",
-        category_id: Optional[int] = None,
-        tag_ids: Optional[list[int]] = None,
-        featured_media_id: Optional[int] = None,
-        source_url: Optional[str] = None,
-        status: Optional[str] = None,
-        additional_category_ids: Optional[list[int]] = None,
-    ) -> Optional[dict]:
-        """Create a new WordPress post.
-
-        Args:
-            title: Post title.
-            content: Post content (HTML).
-            excerpt: Post excerpt.
-            category_id: Category ID.
-            tag_ids: List of tag IDs.
-            featured_media_id: Featured image media ID.
-            source_url: Original source URL for attribution.
-            status: Post status (publish/draft).
-            additional_category_ids: Additional categories for this new post.
-
-        Returns:
-            Created post data or None.
-        """
-        # Last barrier before any WordPress requests, even for direct callers.
-        reason = access_error_reason(title, excerpt, content)
-        if reason:
-            raise ContentRejectedError(reason)
-
-        # PRIMARY CHECK: Check for duplicate by source URL (most reliable - URL never changes)
-        if source_url and self.check_duplicate_by_source_url(source_url):
-            logger.warning(
-                "skipping_duplicate_post_by_source",
-                title=title[:50],
-                source_url=source_url[:60],
+    def check_duplicate_by_slug(self, slug):
+        return bool(
+            self._request(
+                "GET",
+                "posts",
+                params={
+                    "slug": slug,
+                    "status": "publish,draft,pending,future,private",
+                    "context": "edit",
+                },
             )
-            # Return special dict to indicate this was a duplicate, not an error
-            return {"duplicate": True, "source_url": source_url}
+        )
 
-        self._rate_limit()
-
-        # Add source attribution to content
-        if source_url:
-            source_html = f'\n\n<p><em>Source: <a href="{source_url}" target="_blank" rel="noopener">Original Article</a></em></p>'
-            content = content + source_html
-
-        post_data = {
-            "title": title,
-            "content": content,
-            "status": status or self.default_status,
+    def related_candidates(self, title, content, source_name=""):
+        # Search the archive as well as recent stories; entity searches are cached
+        # for the run and still require editorial review before a link is included.
+        if source_name and source_name not in self._related_cache:
+            self._related_cache[source_name] = self._request(
+                "GET",
+                "posts",
+                params={
+                    "search": source_name,
+                    "status": "publish",
+                    "per_page": 10,
+                    "_fields": "id,title,content,excerpt,link,date,slug,status,author",
+                },
+            )
+        candidates = {
+            p["id"]: p for p in self.recent_posts + self._related_cache.get(source_name, [])
         }
+        words = set(plain_text(title + " " + content).lower().split()) - {
+            "the",
+            "and",
+            "for",
+            "that",
+            "with",
+            "from",
+            "this",
+            "will",
+            "have",
+            "are",
+            "news",
+            "mississippi",
+            "county",
+            "said",
+            "was",
+            "has",
+            "their",
+            "been",
+            "they",
+        }
+        ranked = []
+        for post in candidates.values():
+            if urlsplit(post["link"]).hostname != urlsplit(self.base_url).hostname:
+                continue
+            post_title = plain_text(self._raw(post, "title"))
+            excerpt = plain_text(self._raw(post, "content"))[:1600]
+            score = len(words & set((post_title + " " + excerpt).lower().split()))
+            if score >= 3:
+                ranked.append(
+                    (
+                        score,
+                        {
+                            "id": post["id"],
+                            "title": post_title,
+                            "link": post["link"],
+                            "date": post["date"],
+                            "excerpt": excerpt,
+                        },
+                    )
+                )
+        return [p for _, p in sorted(ranked, key=lambda pair: pair[0], reverse=True)[:8]]
 
-        if excerpt:
-            post_data["excerpt"] = excerpt
+    def get_or_create_tags(self, names):
+        ids = []
+        for name in names:
+            if name.casefold() not in self._tag_cache:
+                terms = self._request("GET", "tags", params={"search": name, "per_page": 100})
+                matches = [t for t in terms if plain_text(t["name"]).casefold() == name.casefold()]
+                if matches:
+                    term = matches[0]
+                else:
+                    try:
+                        term = self._request("POST", "tags", json={"name": name})
+                    except requests.HTTPError as exc:
+                        error = exc.response.json()
+                        if error.get("code") != "term_exists" or not error.get("data", {}).get(
+                            "term_id"
+                        ):
+                            raise
+                        term = {"id": int(error["data"]["term_id"])}
+                self._tag_cache[name.casefold()] = term["id"]
+            ids.append(self._tag_cache[name.casefold()])
+        if len(ids) != len(set(ids)):
+            raise RuntimeError("Tag resolution returned ambiguous terms")
+        return ids
 
-        categories = ([category_id] if category_id else []) + (additional_category_ids or [])
-        if categories:
-            post_data["categories"] = list(dict.fromkeys(categories))
+    def upload_media(self, image_bytes, filename, alt_text, caption=""):
+        return wp_upload_media(
+            image_bytes,
+            filename,
+            alt_text,
+            self.base_url,
+            self.username,
+            self.password,
+            self.session,
+            caption=caption,
+        )
 
-        if tag_ids:
-            post_data["tags"] = tag_ids
+    def _seo_request(self, method, post_id, suffix="", **kwargs):
+        url = f"{self.base_url}/wp-json/seopress/v1/posts/{post_id}" + (
+            f"/{suffix}" if suffix else ""
+        )
+        response = self.session.request(method, url, timeout=(10, 30), **kwargs)
+        response.raise_for_status()
+        data = response.json()
+        if method == "PUT" and data.get("code") != "success":
+            raise RuntimeError("SEOPress did not confirm metadata write")
+        return data
 
-        if featured_media_id:
-            post_data["featured_media"] = featured_media_id
+    def create_post(self, *, article, source_url, source_name, related, featured_media_id):
+        core = {k: v for k, v in article.items() if k != "review"}
+        validate_article(core, self.categories, related, self.min_article_words)
+        review = Review.model_validate(article["review"])
+        require_approved_review(review, self.min_quality_score)
+        if not featured_media_id:
+            raise ContentRejectedError("featured_image_required")
+        source_url = canonical_url(source_url)
+        # Repeat author/media verification at the write boundary, never fall back.
+        author = self._request("GET", f"users/{self.author_id}")
+        if author["name"] != self.author_name:
+            raise RuntimeError("Exact byline verification failed")
+        media = self._request("GET", f"media/{featured_media_id}")
+        details = media.get("media_details", {})
+        if (
+            details.get("width", 0) < 1200
+            or details.get("height", 0) < 600
+            or media.get("alt_text") != review.image_alt
+        ):
+            raise RuntimeError("Featured image verification failed")
+        for post_id in article["related_post_ids"]:
+            actual = self._request("GET", f"posts/{post_id}")
+            candidate = next(p for p in related if p["id"] == post_id)
+            if actual["status"] != "publish" or actual["link"] != candidate["link"]:
+                raise RuntimeError("Internal link is no longer published")
+        existing = self.find_source_posts(source_url)
+        if any(not self._is_staging_draft(p, source_url) for p in existing):
+            return {"duplicate": True}
+        if len(existing) > 1:
+            raise RuntimeError("Multiple staging drafts require manual review")
+        if any(
+            similar_story(article["headline"], self._raw(p, "title")) for p in self.recent_posts
+        ):
+            return {"duplicate": True}
+        tag_ids = self.get_or_create_tags(article["tags"])
+        category_ids = [
+            next(c["id"] for c in self.categories if c["slug"] == slug)
+            for slug in article["category_slugs"]
+        ]
+        marker = hashlib.sha256(source_url.encode()).hexdigest()[:12]
+        content = render_content(article, source_url, source_name, related)
+        content += f"<!-- rss-to-wp:quality-v1:{marker} -->"
+        payload = {
+            "title": article["headline"],
+            "content": content,
+            "excerpt": article["excerpt"],
+            "slug": article["slug"] + "-" + marker,
+            "status": "draft",
+            "author": self.author_id,
+            "categories": category_ids,
+            "tags": tag_ids,
+            "featured_media": featured_media_id,
+            "meta": {
+                "_seopress_robots_primary_cat": str(category_ids[0]),
+                "_seopress_analysis_target_kw": ", ".join(article["tags"]),
+            },
+        }
+        if existing:
+            post = self._request("POST", f"posts/{existing[0]['id']}", json=payload)
+        else:
+            if self.check_duplicate_by_slug(payload["slug"]):
+                raise RuntimeError("Conflicting slug; publication blocked")
+            post = self._request("POST", "posts", json=payload)
+        post_id = post["id"]
+        # All following failures leave a nonpublic draft. Never publish first and repair later.
+        self._seo_request(
+            "PUT",
+            post_id,
+            "title-description-metas",
+            json={"title": article["seo_title"], "description": article["meta_description"]},
+        )
+        self._seo_request(
+            "PUT",
+            post_id,
+            "social-settings",
+            json={
+                "_seopress_social_fb_title": article["seo_title"],
+                "_seopress_social_fb_desc": article["meta_description"],
+                "_seopress_social_fb_img": media["source_url"],
+                "_seopress_social_fb_img_attachment_id": str(featured_media_id),
+                "_seopress_social_fb_img_width": str(details["width"]),
+                "_seopress_social_fb_img_height": str(details["height"]),
+                "_seopress_social_twitter_title": article["seo_title"],
+                "_seopress_social_twitter_desc": article["meta_description"],
+                "_seopress_social_twitter_img": media["source_url"],
+            },
+        )
+        verified = self._request("GET", f"posts/{post_id}", params={"context": "edit"})
+        # SEOPress's computed GET response omits data for nonpublic drafts.
+        # Read the registered stored fields through WordPress edit context instead.
+        seo = verified.get("meta", {})
+        if (
+            seo.get("_seopress_titles_title") != article["seo_title"]
+            or seo.get("_seopress_titles_desc") != article["meta_description"]
+            or seo.get("_seopress_social_fb_img") != media["source_url"]
+            or seo.get("_seopress_social_twitter_img") != media["source_url"]
+            or seo.get("_seopress_robots_primary_cat") != str(category_ids[0])
+        ):
+            raise RuntimeError(f"SEO verification failed; post {post_id} remains a draft")
+        for key in ("author", "featured_media", "status", "slug"):
+            if verified.get(key) != payload[key]:
+                raise RuntimeError(
+                    f"WordPress {key} verification failed; post {post_id} remains a draft"
+                )
+        for key in ("categories", "tags"):
+            if set(verified.get(key, [])) != set(payload[key]):
+                raise RuntimeError(f"WordPress {key} verification failed")
+        for key in ("content", "title", "excerpt"):
+            if self._raw(verified, key).strip() != payload[key].strip():
+                raise RuntimeError(f"WordPress altered {key}; publication blocked")
+        if self.default_status == "publish":
+            post = self._request("POST", f"posts/{post_id}", json={"status": "publish"})
+            if post.get("status") != "publish":
+                raise RuntimeError("WordPress did not confirm publication")
+            self.recent_posts.insert(0, post)
+        else:
+            post = verified
+        return post
 
-        logger.info("creating_post", title=title[:50], status=post_data["status"])
 
-        try:
-            response = self.session.post(
-                self._api_url("posts"),
-                json=post_data,
-                timeout=(10, 60),
-            )
-            response.raise_for_status()
-            post = response.json()
-
-            logger.info(
-                "post_created",
-                post_id=post.get("id"),
-                title=title[:50],
-                url=post.get("link"),
-            )
-
-            return post
-
-        except requests.exceptions.HTTPError as e:
-            logger.error(
-                "post_create_http_error",
-                error=str(e),
-                status=e.response.status_code,
-                response=e.response.text[:500],
-            )
-            return None
-        except requests.exceptions.RequestException as e:
-            logger.error("post_create_error", error=str(e))
-            return None
-
-
-def wp_create_post(
-    title: str,
-    content: str,
-    base_url: str,
-    username: str,
-    password: str,
-    **kwargs,
-) -> Optional[dict]:
-    """Convenience function to create a WordPress post.
-
-    Args:
-        title: Post title.
-        content: Post content.
-        base_url: WordPress base URL.
-        username: WordPress username.
-        password: WordPress application password.
-        **kwargs: Additional arguments for create_post.
-
-    Returns:
-        Created post data or None.
-    """
-    client = WordPressClient(base_url, username, password)
-    return client.create_post(title, content, **kwargs)
+def wp_create_post(*args, **kwargs):
+    raise RuntimeError("Use the reviewed, staged WordPressClient.create_post pipeline")

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import feedparser
+import requests
 
 from rss_to_wp.utils import get_logger
 
@@ -23,7 +24,9 @@ def parse_feed(url: str) -> Optional[dict[str, Any]]:
     logger.info("parsing_feed", url=url)
 
     try:
-        feed = feedparser.parse(url)
+        response = requests.get(url, timeout=(10, 30), headers={"User-Agent": "AlcornNewsRSS/2.0"})
+        response.raise_for_status()
+        feed = feedparser.parse(response.content)
 
         # Check for parsing errors
         if feed.bozo and feed.bozo_exception:

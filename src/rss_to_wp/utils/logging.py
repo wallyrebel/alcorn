@@ -90,7 +90,5 @@ def get_logger(name: Optional[str] = None) -> structlog.BoundLogger:
     Returns:
         Structlog bound logger.
     """
-    logger = structlog.get_logger()
-    if name:
-        logger = logger.bind(component=name)
-    return logger
+    # Keep module-level loggers lazy until setup_logging has configured filtering.
+    return structlog.get_logger(**({"component": name} if name else {}))

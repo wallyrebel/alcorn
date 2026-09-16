@@ -1,131 +1,86 @@
-# =============================================================================
-# RSS Feeds Configuration for Alcorn County News
-# =============================================================================
-
+# Verified source identity; categories and tags are selected per article.
 feeds:
-  # --- FetchRSS Feed 1 ---
-  - name: "Local Feed 1"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vfgOm7bS9wZ.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
-
-  # --- FetchRSS Feed 2 ---
-  - name: "Local Feed 2"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vdUuY5240MW.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
-
-  # --- FetchRSS Feed 3 ---
-  - name: "Local Feed 3"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vdUu06F62dA.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
-
-  # --- FetchRSS Feed 4 ---
-  - name: "Local Feed 4"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vdUpJ5VAA1j.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
-
-  # --- FetchRSS Feed 5 ---
-  - name: "Local Feed 5"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vccpR51WAHC.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
-
-  # --- FetchRSS Feed 6 ---
-  - name: "Local Feed 6"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vccs7DIv20Q.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
-
-  # --- FetchRSS Feed 7 ---
-  - name: "Local Feed 7"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vcctj5uA2l8.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
-
-  # --- FetchRSS Feed 8 ---
-  - name: "Local Feed 8"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vcd2xFDTBzm.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
-
-  # --- Crime Stoppers ---
-  - name: "Crime Stoppers"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vcd587ZS6st.rss"
-    default_category: "Crime"
-    default_tags:
-      - "Crime Stoppers"
-      - "Alcorn County"
-      - "Crime"
-    max_per_run: 3
-
-  # --- FetchRSS Feed 10 ---
-  - name: "Local Feed 10"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vcd689iq9Ap.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
-
-  # --- FetchRSS Feed 11 ---
-  - name: "Local Feed 11"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vcd7T1vE718.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
-
-  # --- FetchRSS Feed 12 ---
-  - name: "Local Feed 12"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vfoORA4wG0o.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
-
-  # --- FetchRSS Feed 13 ---
-  - name: "Local Feed 13"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vgnBZ7wcFrm.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
-
-  # --- FetchRSS Feed 14 ---
-  - name: "Local Feed 14"
-    url: "https://fetchrss.com/feed/1vcaujD2G3c21vgQmMDQnBLX.rss"
-    default_category: "Local News"
-    default_tags:
-      - "Mississippi"
-      - "Alcorn County"
-    max_per_run: 3
+- name: Local Feed 1
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vfgOm7bS9wZ.rss
+  max_per_run: 2
+  source_name: First Circuit District Attorney's Office
+  source_url: https://www.facebook.com/WeddleDA
+  primary_source: true
+- name: Local Feed 2
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vdUuY5240MW.rss
+  max_per_run: 2
+  source_name: Northeast Mississippi Community College
+  source_url: https://www.facebook.com/nemcc
+  primary_source: true
+- name: Local Feed 3
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vdUu06F62dA.rss
+  max_per_run: 2
+  source_name: Northeast Mississippi Community College - Adult Education
+  source_url: https://www.facebook.com/nemccadulted
+  primary_source: true
+- name: Local Feed 4
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vdUpJ5VAA1j.rss
+  max_per_run: 2
+  source_name: US National Weather Service Memphis Tennessee
+  source_url: https://www.facebook.com/NWSMemphis
+  primary_source: true
+- name: Local Feed 5
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vccpR51WAHC.rss
+  max_per_run: 2
+  source_name: Alcorn County Sheriff’s Office
+  source_url: https://www.facebook.com/profile.php?id=100064823945313
+  primary_source: true
+- name: Local Feed 6
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vccs7DIv20Q.rss
+  max_per_run: 2
+  source_name: Corinth Police Department
+  source_url: https://www.facebook.com/CorinthPD
+  primary_source: true
+- name: Local Feed 7
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vcctj5uA2l8.rss
+  max_per_run: 2
+  source_name: Mississippi Office of the State Auditor
+  source_url: https://www.facebook.com/msstateauditor
+  primary_source: true
+- name: Local Feed 8
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vcd2xFDTBzm.rss
+  max_per_run: 2
+  source_name: Mississippi Emergency Management Agency
+  source_url: https://www.facebook.com/msemaorg
+  primary_source: true
+- name: Crime Stoppers
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vcd587ZS6st.rss
+  max_per_run: 2
+  source_name: Crime Stoppers of Northeast Mississippi
+  source_url: https://www.facebook.com/csnems
+  primary_source: true
+- name: Local Feed 10
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vcd689iq9Ap.rss
+  max_per_run: 2
+  source_name: Booneville Police Department
+  source_url: https://www.facebook.com/cityofboonevillems
+  primary_source: true
+- name: Local Feed 11
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vcd7T1vE718.rss
+  max_per_run: 2
+  source_name: Mississippi Department of Public Safety (Official)
+  source_url: https://www.facebook.com/MissDPS
+  primary_source: true
+- name: Local Feed 12
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vfoORA4wG0o.rss
+  max_per_run: 2
+  source_name: Mississippi Department of Wildlife, Fisheries, and Parks
+  source_url: https://www.facebook.com/mdwfp
+  primary_source: true
+- name: Local Feed 13
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vgnBZ7wcFrm.rss
+  max_per_run: 2
+  source_name: Mississippi Department of Revenue
+  source_url: https://www.facebook.com/MSDeptofRevenue
+  primary_source: true
+- name: Local Feed 14
+  url: https://fetchrss.com/feed/1vcaujD2G3c21vgQmMDQnBLX.rss
+  max_per_run: 2
+  source_name: Prentiss County Sheriff's Department
+  source_url: https://www.facebook.com/prentisscountysheriff
+  primary_source: true

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import pendulum
 import yaml
@@ -19,8 +18,11 @@ class FeedConfig(BaseModel):
     url: str
     default_category: Optional[str] = None
     default_tags: list[str] = Field(default_factory=list)
-    max_per_run: int = 5
+    max_per_run: int = Field(default=2, ge=1, le=10)
     use_original_title: bool = False
+    source_name: str = ""
+    source_url: str = ""
+    primary_source: bool = False
 
     @field_validator("url")
     @classmethod
@@ -48,13 +50,21 @@ class AppSettings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = Field(..., description="OpenAI API key")
-    openai_model: str = Field(default="gpt-4.1-nano", description="OpenAI model to use")
+    openai_model: str = Field(default="gpt-5-mini", description="Affordable writing model")
+    openai_review_model: str = "gpt-5-mini"
+    max_candidates_per_run: int = Field(default=6, ge=1, le=30)
+    max_posts_per_run: int = Field(default=2, ge=1, le=10)
+    min_source_words: int = Field(default=80, ge=50)
+    min_article_words: int = Field(default=150, ge=100)
+    min_quality_score: int = Field(default=90, ge=85, le=100)
 
     # WordPress
     wordpress_base_url: str = Field(..., description="WordPress site URL")
     wordpress_username: str = Field(..., description="WordPress username")
     wordpress_app_password: str = Field(..., description="WordPress application password")
-    wordpress_post_status: str = Field(default="publish", description="Post status")
+    wordpress_post_status: Literal["publish", "draft"] = "publish"
+    wordpress_author_id: int = Field(default=1, gt=0)
+    wordpress_author_name: str = "Jon R Myers"
 
     # Image fallback providers (optional)
     pexels_api_key: Optional[str] = Field(default=None, description="Pexels API key")
@@ -63,12 +73,14 @@ class AppSettings(BaseSettings):
     # Logging & Timezone
     log_level: str = Field(default="INFO", description="Log level")
     log_file: Optional[str] = Field(default=None, description="Optional log file path")
-    timezone: str = Field(default="UTC", description="Timezone for date calculations")
+    timezone: str = Field(default="America/Chicago", description="Timezone for date calculations")
 
     # Email notifications (optional)
     smtp_email: Optional[str] = Field(default=None, description="SMTP sender email")
     smtp_password: Optional[str] = Field(default=None, description="SMTP password/app password")
-    notification_email: Optional[str] = Field(default=None, description="Email to send notifications to")
+    notification_email: Optional[str] = Field(
+        default=None, description="Email to send notifications to"
+    )
 
     @field_validator("wordpress_base_url")
     @classmethod

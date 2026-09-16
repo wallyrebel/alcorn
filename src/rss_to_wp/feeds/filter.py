@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+from calendar import timegm
 from datetime import datetime
-from time import mktime, struct_time
+from time import struct_time
 from typing import Any, Optional
 
 import pendulum
@@ -35,7 +36,7 @@ def parse_entry_date(entry: dict[str, Any]) -> Optional[datetime]:
         if field in entry and entry[field]:
             try:
                 time_struct: struct_time = entry[field]
-                timestamp = mktime(time_struct)
+                timestamp = timegm(time_struct)
                 return datetime.fromtimestamp(timestamp, tz=pendulum.UTC)
             except (TypeError, ValueError, OverflowError):
                 continue
@@ -74,7 +75,7 @@ def is_within_window(
     # Convert entry_date to pendulum for comparison
     entry_pendulum = pendulum.instance(entry_date)
 
-    return entry_pendulum >= cutoff
+    return cutoff <= entry_pendulum <= now.add(minutes=5)
 
 
 def pick_entries(
@@ -156,6 +157,11 @@ def generate_entry_key(entry: dict[str, Any], feed_url: str) -> str:
     Returns:
         Unique string key for the entry.
     """
+    # Canonical links survive feed-provider GUID changes and cross-feed reposts.
+    if entry.get("link"):
+        from rss_to_wp.editorial import canonical_url
+        return "link:" + canonical_url(entry["link"])
+
     # Try guid/id first
     if "id" in entry and entry["id"]:
         return f"id:{entry['id']}"

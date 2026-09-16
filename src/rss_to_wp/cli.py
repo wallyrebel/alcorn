@@ -1,11 +1,14 @@
-"""CLI interface for RSS to WordPress automation."""
+"""Quality-first RSS publishing with bounded cost and auditable decisions."""
 
 from __future__ import annotations
 
-import time
+import json
+from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 from typing import Optional
 
+import pendulum
 import typer
 from dotenv import load_dotenv
 
@@ -14,13 +17,11 @@ from rss_to_wp.config import (
     AppSettings,
     FeedConfig,
     get_app_settings,
+    get_data_dir,
     load_feeds_config,
 )
-from rss_to_wp.content_policy import (
-    ContentRejectedError,
-    require_clean_article,
-    require_usable_source,
-)
+from rss_to_wp.content_policy import ContentRejectedError, plain_text, require_usable_source
+from rss_to_wp.editorial import canonical_url, fingerprint, render_content, similar_story
 from rss_to_wp.feeds import (
     generate_entry_key,
     get_entry_content,
@@ -29,205 +30,109 @@ from rss_to_wp.feeds import (
     parse_feed,
     pick_entries,
 )
-from rss_to_wp.images import download_image, find_fallback_image, find_rss_image
+from rss_to_wp.feeds.filter import parse_entry_date
+from rss_to_wp.images import download_image, find_rss_image
 from rss_to_wp.local_categories import additional_local_categories
 from rss_to_wp.rewriter import OpenAIRewriter
 from rss_to_wp.storage import DedupeStore
-from rss_to_wp.utils import build_summary_email, send_email_notification, setup_logging
+from rss_to_wp.utils import setup_logging
 from rss_to_wp.wordpress import WordPressClient
 
-# Load environment variables from .env file
 load_dotenv()
-
-app = typer.Typer(
-    name="rss-to-wp",
-    help="Automated RSS feed to WordPress publisher with AI rewriting.",
-    add_completion=False,
-)
-
-
-def version_callback(value: bool) -> None:
-    """Print version and exit."""
-    if value:
-        typer.echo(f"rss-to-wp version {__version__}")
-        raise typer.Exit()
+app = typer.Typer(name="rss-to-wp", add_completion=False)
 
 
 @app.callback()
-def main(
-    version: bool = typer.Option(
-        False,
-        "--version",
-        "-v",
-        callback=version_callback,
-        is_eager=True,
-        help="Show version and exit.",
-    ),
-) -> None:
-    """RSS to WordPress automation CLI."""
-    pass
+def main():
+    """Publish only articles that pass editorial, image and WordPress verification."""
 
 
 @app.command()
 def run(
-    config: Path = typer.Option(
-        Path("feeds.yaml"),
-        "--config",
-        "-c",
-        help="Path to feeds configuration file.",
-    ),
-    dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        "-n",
-        help="Process feeds without publishing to WordPress.",
-    ),
-    single_feed: Optional[str] = typer.Option(
-        None,
-        "--single-feed",
-        "-f",
-        help="Process only a specific feed by name.",
-    ),
-    hours: int = typer.Option(
-        48,
-        "--hours",
-        "-h",
-        help="Time window in hours for entries (strictly enforced).",
-    ),
-) -> None:
-    """Run the RSS to WordPress automation.
-
-    Fetches RSS feeds, rewrites content, and publishes to WordPress.
-    """
-    # Load settings
+    config: Path = typer.Option(Path("feeds.yaml"), "--config", "-c"),
+    dry_run: bool = typer.Option(False, "--dry-run", "-n"),
+    single_feed: Optional[str] = typer.Option(None, "--single-feed", "-f"),
+    hours: int = typer.Option(48, "--hours", "-h", min=1, max=72),
+):
+    """Evaluate feeds; dry runs perform GETs and model calls but no WordPress writes."""
+    logger = setup_logging()
     try:
         settings = get_app_settings()
-    except Exception as e:
-        typer.echo(f"Error loading settings: {e}", err=True)
-        typer.echo("Make sure you have a .env file with required variables.", err=True)
-        raise typer.Exit(1)
-
-    # Setup logging
-    logger = setup_logging(
-        level=settings.log_level,
-        log_file=settings.log_file,
-    )
-
-    logger.info(
-        "starting_rss_to_wp",
-        version=__version__,
-        dry_run=dry_run,
-        config=str(config),
-    )
-
-    # Load feeds config
-    try:
-        feeds_config = load_feeds_config(config)
-    except FileNotFoundError:
-        logger.error("config_not_found", path=str(config))
-        raise typer.Exit(1)
-    except Exception as e:
-        logger.error("config_load_error", error=str(e))
-        raise typer.Exit(1)
-
-    feeds = feeds_config.feeds
-
-    # Filter to single feed if specified
-    if single_feed:
-        feeds = [f for f in feeds if f.name.lower() == single_feed.lower()]
-        if not feeds:
-            logger.error("feed_not_found", name=single_feed)
-            raise typer.Exit(1)
-
-    logger.info("feeds_loaded", count=len(feeds))
-
-    # Initialize components
-    dedupe_store = DedupeStore()
-    rewriter = OpenAIRewriter(
-        api_key=settings.openai_api_key,
-        model=settings.openai_model,
-    )
-
-    wp_client = None
-    if not dry_run:
-        wp_client = WordPressClient(
-            base_url=settings.wordpress_base_url,
-            username=settings.wordpress_username,
-            password=settings.wordpress_app_password,
-            default_status=settings.wordpress_post_status,
+        logger = setup_logging(level=settings.log_level, log_file=settings.log_file)
+        feeds = load_feeds_config(config).feeds
+        if single_feed:
+            feeds = [f for f in feeds if f.name.casefold() == single_feed.casefold()]
+            if not feeds:
+                raise ValueError("Requested feed not found")
+        wp = WordPressClient(
+            settings.wordpress_base_url,
+            settings.wordpress_username,
+            settings.wordpress_app_password,
+            settings.wordpress_post_status,
+            settings.wordpress_author_id,
+            settings.wordpress_author_name,
+            settings.min_quality_score,
+            settings.min_article_words,
         )
-
-    # Process each feed
-    total_processed = 0
-    total_skipped = 0
-    total_errors = 0
-    published_articles: list[dict] = []  # Track for email notification
-
-    for feed_config in feeds:
-        try:
-            processed, skipped, errors = process_feed(
-                feed_config=feed_config,
-                settings=settings,
-                dedupe_store=dedupe_store,
-                rewriter=rewriter,
-                wp_client=wp_client,
-                dry_run=dry_run,
-                hours=hours,
-                logger=logger,
-                published_articles=published_articles,  # Pass for tracking
-            )
-            total_processed += processed
-            total_skipped += skipped
-            total_errors += errors
-
-            # Rate limit between feeds
-            time.sleep(1)
-
-        except Exception as e:
-            logger.error(
-                "feed_processing_error",
-                feed=feed_config.name,
-                error=str(e),
-            )
-            total_errors += 1
-            continue
-
-    # Summary
-    logger.info(
-        "run_complete",
-        total_processed=total_processed,
-        total_skipped=total_skipped,
-        total_errors=total_errors,
+        wp.preflight()
+    except Exception as exc:
+        logger.error("preflight_failed", error=str(exc))
+        raise typer.Exit(1) from exc
+    writer = OpenAIRewriter(
+        settings.openai_api_key, settings.openai_model, review_model=settings.openai_review_model
     )
-
-    # Send email notification ONLY if new articles were published
-    if (
-        not dry_run
-        and published_articles  # Only if there are new articles
-        and settings.smtp_email
-        and settings.smtp_password
-        and settings.notification_email
-    ):
-        try:
-            subject, html_body = build_summary_email(
-                processed_articles=published_articles,
-                skipped_count=total_skipped,
-                error_count=total_errors,
-                site_name="Alcorn County News",
-            )
-            send_email_notification(
-                smtp_email=settings.smtp_email,
-                smtp_password=settings.smtp_password,
-                to_email=settings.notification_email,
-                subject=subject,
-                html_body=html_body,
-            )
-        except Exception as e:
-            logger.error("email_notification_error", error=str(e))
-
-    # Only exit with error if nothing was accomplished (no processed, no skipped)
-    # This means partial success (some errors but some articles published/skipped) = success
-    if total_errors > 0 and total_processed == 0 and total_skipped == 0:
+    store = DedupeStore()
+    budget = {"candidates": 0, "posts": 0}
+    report = {
+        "version": __version__,
+        "dry_run": dry_run,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "writer_model": settings.openai_model,
+        "review_model": settings.openai_review_model,
+        "decisions": [],
+    }
+    # Rotate feed priority hourly so a small global budget cannot starve later feeds.
+    offset = int(datetime.now(timezone.utc).timestamp() // 3600) % max(len(feeds), 1)
+    feeds = feeds[offset:] + feeds[:offset]
+    totals = [0, 0, 0]
+    try:
+        for feed in feeds:
+            if (
+                budget["candidates"] >= settings.max_candidates_per_run
+                or budget["posts"] >= settings.max_posts_per_run
+            ):
+                break
+            try:
+                counts = process_feed(
+                    feed,
+                    settings,
+                    store,
+                    writer,
+                    wp,
+                    dry_run,
+                    hours,
+                    logger,
+                    budget=budget,
+                    decisions=report["decisions"],
+                )
+            except Exception as exc:
+                logger.error("feed_failed", feed=feed.name, error=str(exc))
+                report["decisions"].append({"feed": feed.name, "error": str(exc)})
+                counts = (0, 0, 1)
+            totals = [a + b for a, b in zip(totals, counts)]
+    finally:
+        report.update(processed=totals[0], skipped=totals[1], errors=totals[2], budget=budget)
+        path = get_data_dir() / ("dry-run-report.json" if dry_run else "run-report.json")
+        path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.info(
+            "run_complete",
+            report=str(path),
+            processed=totals[0],
+            skipped=totals[1],
+            errors=totals[2],
+        )
+    # Rejections are healthy. Service/publishing failures must be visible in Actions.
+    if totals[2]:
         raise typer.Exit(1)
 
 
@@ -236,310 +141,188 @@ def process_feed(
     settings: AppSettings,
     dedupe_store: DedupeStore,
     rewriter: OpenAIRewriter,
-    wp_client: Optional[WordPressClient],
+    wp_client: WordPressClient,
     dry_run: bool,
     hours: int,
     logger,
-    published_articles: Optional[list[dict]] = None,
-) -> tuple[int, int, int]:
-    """Process a single feed.
-
-    Returns:
-        Tuple of (processed_count, skipped_count, error_count)
-    """
-    logger.info("processing_feed", name=feed_config.name, url=feed_config.url)
-
-    processed = 0
-    skipped = 0
-    errors = 0
-
-    # Parse feed
+    published_articles=None,
+    *,
+    budget=None,
+    decisions=None,
+):
+    budget = budget if budget is not None else {"candidates": 0, "posts": 0}
+    decisions = decisions if decisions is not None else []
     feed = parse_feed(feed_config.url)
-    if not feed or not feed.entries:
-        logger.warning("feed_empty_or_failed", name=feed_config.name)
-        return (0, 0, 1)
-
-    # Filter entries
+    if feed is None:
+        return 0, 0, 1
+    if not feed.entries:
+        return 0, 0, 0
+    # A renamed/replaced feed must not silently inherit the old source attribution.
+    actual_source = plain_text(feed.feed.get("title", "")).removesuffix(" on Facebook")
+    if (
+        not feed_config.primary_source
+        or actual_source != feed_config.source_name
+        or canonical_url(feed.feed.get("link", "")) != canonical_url(feed_config.source_url)
+    ):
+        logger.error("feed_identity_mismatch", feed=feed_config.name)
+        return 0, 0, 1
     entries = pick_entries(
-        entries=feed.entries,
-        max_count=feed_config.max_per_run,
-        hours_window=hours,
-        timezone=settings.timezone,
+        feed.entries, max_count=30, hours_window=hours, timezone=settings.timezone
     )
-
-    if not entries:
-        logger.info("no_valid_entries", name=feed_config.name)
-        return (0, 0, 0)
-
-    logger.info("entries_to_process", name=feed_config.name, count=len(entries))
-
+    processed = skipped = errors = attempted = 0
     for entry in entries:
+        if (
+            attempted >= feed_config.max_per_run
+            or budget["candidates"] >= settings.max_candidates_per_run
+            or budget["posts"] >= settings.max_posts_per_run
+        ):
+            break
+        title, content = get_entry_title(entry), get_entry_content(entry)
+        source_url = get_entry_link(entry) or ""
+        decision = {"feed": feed_config.name, "source_url": source_url, "source_title": title}
+        fp = fingerprint(title, content + feed_config.source_name + str(entry.get("published", "")))
         try:
-            # Generate unique key
-            entry_key = generate_entry_key(entry, feed_config.url)
-
-            # Check if already processed
-            if dedupe_store.is_processed(entry_key):
-                logger.info(
-                    "entry_skipped_duplicate",
-                    key=entry_key,
-                    title=get_entry_title(entry)[:50],
-                )
-                skipped += 1
-                continue
-
-            # Process entry
-            result = process_entry(
-                entry=entry,
-                feed_config=feed_config,
-                settings=settings,
-                rewriter=rewriter,
-                wp_client=wp_client,
-                dry_run=dry_run,
-                logger=logger,
-            )
-
-            if result:
-                if result.get("skipped"):
-                    logger.warning(
-                        "entry_skipped_content_policy",
-                        title=get_entry_title(entry)[:50],
-                        reason=result["reason"],
-                    )
-                    # Retry on a future run if the feed repairs the source. Never
-                    # poison dedupe with rejected content or dry-run previews.
-                    skipped += 1
-                    continue
-                if dry_run:
-                    processed += 1
-                    continue
-                # Check if this was a WordPress duplicate (already published)
-                if result.get("duplicate"):
-                    # WordPress found this already exists - treat as skip, not error
-                    # Also mark in SQLite so we don't re-process next time
-                    dedupe_store.mark_processed(
-                        entry_key=entry_key,
-                        feed_url=feed_config.url,
-                        entry_title=get_entry_title(entry),
-                        entry_link=get_entry_link(entry) or "",
-                        wp_post_id=None,
-                        wp_post_url=None,
-                    )
-                    logger.info(
-                        "entry_skipped_wp_duplicate",
-                        title=get_entry_title(entry)[:50],
-                    )
-                    skipped += 1
-                else:
-                    # Normal successful publish
-                    dedupe_store.mark_processed(
-                        entry_key=entry_key,
-                        feed_url=feed_config.url,
-                        entry_title=get_entry_title(entry),
-                        entry_link=get_entry_link(entry) or "",
-                        wp_post_id=result.get("id"),
-                        wp_post_url=result.get("link"),
-                    )
-                    processed += 1
-
-                    # Track for email notification
-                    if published_articles is not None and result.get("link"):
-                        published_articles.append(
-                            {
-                                "title": result.get("title", {}).get(
-                                    "rendered", get_entry_title(entry)
-                                ),
-                                "url": result.get("link"),
-                                "feed_name": feed_config.name,
-                            }
-                        )
+            key = generate_entry_key(entry, feed_config.url)
+            if dedupe_store.is_processed(key) or dedupe_store.source_seen(source_url):
+                result = {"skipped": True, "reason": "already_processed"}
+            elif dedupe_store.rejection_reason(fp):
+                result = {
+                    "skipped": True,
+                    "reason": "cached_rejection: " + dedupe_store.rejection_reason(fp),
+                }
             else:
-                errors += 1
-
-            # Rate limit between entries
-            time.sleep(1)
-
-        except Exception as e:
-            logger.error(
-                "entry_processing_error",
-                title=get_entry_title(entry)[:50],
-                error=str(e),
-            )
+                before = budget["candidates"]
+                result = process_entry(
+                    entry,
+                    feed_config,
+                    settings,
+                    rewriter,
+                    wp_client,
+                    dry_run,
+                    logger,
+                    budget=budget,
+                )
+                attempted += budget["candidates"] - before
+            decision.update(result)
+            if result.get("skipped") or result.get("duplicate"):
+                skipped += 1
+                if not dry_run and result.get("cache_rejection"):
+                    dedupe_store.record_rejection(fp, result["reason"])
+            else:
+                processed += 1
+                budget["posts"] += 1
+                if not dry_run:
+                    dedupe_store.mark_processed(
+                        key,
+                        feed_config.url,
+                        title,
+                        source_url,
+                        result.get("id"),
+                        result.get("link"),
+                    )
+        except Exception as exc:
             errors += 1
-            continue
-
-    return (processed, skipped, errors)
+            decision.update(error=str(exc))
+            logger.error("entry_processing_error", title=title[:80], error=str(exc))
+        decisions.append(decision)
+    return processed, skipped, errors
 
 
 def process_entry(
-    entry,
-    feed_config: FeedConfig,
-    settings: AppSettings,
-    rewriter: OpenAIRewriter,
-    wp_client: Optional[WordPressClient],
-    dry_run: bool,
-    logger,
-) -> Optional[dict]:
-    """Process a single RSS entry.
-
-    Returns:
-        WordPress post data if successful, None otherwise.
-    """
-    title = get_entry_title(entry)
-    content = get_entry_content(entry)
-    link = get_entry_link(entry)
-
-    logger.info("processing_entry", title=title[:50])
-
+    entry, feed_config, settings, rewriter, wp_client, dry_run, logger, *, budget=None
+):
+    title, content = get_entry_title(entry), get_entry_content(entry)
+    budget = budget if budget is not None else {"candidates": 0, "posts": 0}
     try:
-        # Inspect ALL textual RSS fields, including summaries when content:encoded
-        # exists. A usable-looking title must not mask a source access failure.
         other_fields = [entry.get("summary", ""), entry.get("description", "")]
         other_fields.extend(item.get("value", "") for item in entry.get("content", []))
         require_usable_source(title, content, *other_fields)
-        rewritten = rewriter.rewrite(
-            content=content,
-            original_title=title,
-            use_original_title=feed_config.use_original_title,
-        )
-        if rewritten:
-            require_clean_article(rewritten)
-    except ContentRejectedError as exc:
-        logger.warning("content_rejected", title=title[:50], reason=str(exc))
-        return {"skipped": True, "reason": str(exc)}
-
-    if not rewritten:
-        logger.error("rewrite_failed", title=title[:50])
-        return None
-
-    # Find image
-    featured_media_id = None
-    image_result = None
-
-    # Try RSS image first
-    image_url = find_rss_image(entry, base_url=link or "")
-    image_alt = ""
-
-    if image_url:
-        logger.info("using_rss_image", url=image_url)
+        if len(plain_text(content).split()) < settings.min_source_words:
+            raise ContentRejectedError("source_too_thin")
+        if not feed_config.source_name or not feed_config.primary_source:
+            raise ContentRejectedError("unverified_source_identity")
+        link = canonical_url(get_entry_link(entry) or "")
+        published = parse_entry_date(entry)
+        if not published:
+            raise ContentRejectedError("missing_source_date")
+        if wp_client.check_duplicate_by_source_url(link):
+            return {"duplicate": True, "reason": "source_already_on_wordpress"}
+        related = wp_client.related_candidates(title, content, source_name=feed_config.source_name)
+        if any(similar_story(title, p["title"]) for p in related):
+            return {"duplicate": True, "reason": "story_already_covered"}
+        image_url = find_rss_image(entry, base_url=link)
+        if not image_url:
+            raise ContentRejectedError("source_image_required")
         image_result = download_image(image_url)
-        if image_result:
-            image_bytes, filename, _ = image_result
-            image_alt = title[:100]  # Use title as alt for RSS images
-        else:
-            image_url = None
-
-    # Fallback to stock photos
-    if not image_url:
-        fallback = find_fallback_image(
-            title=title,
-            feed_name=feed_config.name,
-            pexels_key=settings.pexels_api_key,
-            unsplash_key=settings.unsplash_access_key,
-        )
-        if fallback:
-            logger.info("using_fallback_image", source=fallback["source"])
-            image_result = download_image(fallback["url"])
-            if image_result:
-                image_bytes, filename, _ = image_result
-                image_alt = fallback["alt_text"]
-            else:
-                fallback = None
-
-        if not fallback:
-            logger.warning("no_image_available", title=title[:50])
-
-    # Upload image to WordPress
-    if not dry_run and wp_client and image_result:
-        featured_media_id = wp_client.upload_media(
+        if not image_result:
+            # A CDN outage can recover; do not cache it as an editorial rejection.
+            return {"skipped": True, "reason": "source_image_unavailable_or_undersized"}
+        image_bytes, _, _ = image_result
+        budget["candidates"] += 1
+        context = {
+            "source_name": feed_config.source_name,
+            "source_url": link,
+            "source_published_at": pendulum.instance(published)
+            .in_timezone(settings.timezone)
+            .isoformat(),
+            "current_time": pendulum.now(settings.timezone).isoformat(),
+            "categories": wp_client.categories,
+            "related_posts": related,
+            "source_local_category_ids": additional_local_categories(
+                settings.wordpress_base_url, title, content
+            ),
+        }
+        article = rewriter.rewrite(
+            content,
+            title,
+            feed_config.use_original_title,
+            context=context,
             image_bytes=image_bytes,
-            filename=filename,
-            alt_text=image_alt,
+            min_source_words=settings.min_source_words,
+            min_article_words=settings.min_article_words,
+            min_quality_score=settings.min_quality_score,
         )
-
-    # Get/create category
-    category_id = None
-    additional_category_ids = additional_local_categories(
-        getattr(settings, "wordpress_base_url", ""), title, content
-    )
-    if not dry_run and wp_client and feed_config.default_category:
-        category_id = wp_client.get_or_create_category(feed_config.default_category)
-    for local_id in additional_category_ids:
-        logger.info("local_category_selected", category_id=local_id, source_title=title[:80])
-
-    # Get/create tags
-    tag_ids = []
-    if not dry_run and wp_client and feed_config.default_tags:
-        tag_ids = wp_client.get_or_create_tags(feed_config.default_tags)
-
-    # Create post
-    if dry_run:
-        logger.info(
-            "dry_run_would_publish",
-            headline=rewritten["headline"][:50],
-            body_length=len(rewritten["body"]),
-            has_image=featured_media_id is not None or image_result is not None,
-            category=feed_config.default_category,
-            additional_category_ids=additional_category_ids,
-            tags=feed_config.default_tags,
+        if dry_run:
+            return {
+                "preview": True,
+                "article": article,
+                "image_url": image_url,
+                "content": render_content(article, link, feed_config.source_name, related),
+            }
+        caption = escape(article["review"]["image_caption"])
+        caption += (
+            f' Source: <a href="{escape(link, quote=True)}">{escape(feed_config.source_name)}</a>.'
         )
-        return {"id": 0, "link": "dry-run://not-published"}
-
-    if not wp_client:
-        return None
-
-    post = wp_client.create_post(
-        title=rewritten["headline"],
-        content=rewritten["body"],
-        excerpt=rewritten.get("excerpt", ""),
-        category_id=category_id,
-        additional_category_ids=additional_category_ids,
-        tag_ids=tag_ids,
-        featured_media_id=featured_media_id,
-        source_url=link,
-    )
-
-    return post
+        media_id = wp_client.upload_media(
+            image_bytes, article["slug"] + ".jpg", article["review"]["image_alt"], caption=caption
+        )
+        if not media_id:
+            raise RuntimeError("Featured image upload/metadata failed; publication blocked")
+        post = wp_client.create_post(
+            article=article,
+            source_url=link,
+            source_name=feed_config.source_name,
+            related=related,
+            featured_media_id=media_id,
+        )
+        return {k: post[k] for k in ("id", "link", "status", "duplicate") if k in post}
+    except ContentRejectedError as exc:
+        logger.info("content_rejected", title=title[:80], reason=str(exc))
+        return {"skipped": True, "reason": str(exc), "cache_rejection": True}
 
 
 @app.command()
-def status() -> None:
-    """Show status of processed entries."""
-    logger = setup_logging()
-    dedupe_store = DedupeStore()
-
-    count = dedupe_store.get_processed_count()
-    logger.info("processed_entries_count", count=count)
-
-    recent = dedupe_store.get_recent_entries(limit=10)
-    if recent:
-        typer.echo("\nRecent entries:")
-        for entry in recent:
-            typer.echo(f"  - {entry['entry_title'][:60]}...")
-            typer.echo(f"    Processed: {entry['processed_at']}")
-            if entry.get("wp_post_url"):
-                typer.echo(f"    URL: {entry['wp_post_url']}")
+def status():
+    store = DedupeStore()
+    typer.echo(f"Processed entries: {store.get_processed_count()}")
+    for entry in store.get_recent_entries(limit=10):
+        typer.echo(f"{entry['entry_title']} | {entry['wp_post_url']}")
 
 
 @app.command()
-def clear_db(
-    confirm: bool = typer.Option(
-        False,
-        "--yes",
-        "-y",
-        help="Confirm database clear without prompting.",
-    ),
-) -> None:
-    """Clear the processed entries database."""
-    if not confirm:
-        confirm = typer.confirm("Are you sure you want to clear all processed entries?")
-
-    if confirm:
-        dedupe_store = DedupeStore()
-        count = dedupe_store.clear_all()
-        typer.echo(f"Cleared {count} entries from database.")
-    else:
-        typer.echo("Cancelled.")
+def clear_db(confirm: bool = typer.Option(False, "--yes", "-y")):
+    if confirm or typer.confirm("Clear local publishing history and editorial decisions?"):
+        typer.echo(f"Cleared {DedupeStore().clear_all()} entries.")
 
 
 if __name__ == "__main__":

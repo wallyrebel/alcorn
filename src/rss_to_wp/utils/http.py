@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import requests
 from requests.adapters import HTTPAdapter
 from tenacity import (

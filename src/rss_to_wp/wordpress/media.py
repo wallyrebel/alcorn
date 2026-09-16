@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import mimetypes
-from pathlib import Path
 from typing import Optional
 
 import requests
@@ -21,6 +20,7 @@ def wp_upload_media(
     username: str,
     password: str,
     session: Optional[requests.Session] = None,
+    caption: str = "",
 ) -> Optional[int]:
     """Upload an image to WordPress Media Library.
 
@@ -72,9 +72,16 @@ def wp_upload_media(
 
         logger.info("media_uploaded", media_id=media_id, filename=filename)
 
-        # Update alt text if provided
-        if alt_text:
-            _update_media_alt(media_id, alt_text, base_url, username, password, session)
+        # Metadata is required: a failed update must never yield publishable media.
+        update = session.post(
+            f"{url}/{media_id}",
+            json={"alt_text": alt_text, "caption": caption},
+            auth=(username, password),
+            timeout=(10, 30),
+        )
+        update.raise_for_status()
+        if update.json().get("alt_text") != alt_text:
+            return None
 
         return media_id
 

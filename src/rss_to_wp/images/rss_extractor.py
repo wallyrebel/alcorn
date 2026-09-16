@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any, Optional
 from urllib.parse import urljoin, urlparse
 
@@ -39,7 +38,7 @@ def is_valid_image_url(url: str) -> bool:
 
     try:
         parsed = urlparse(url)
-        if not parsed.scheme or not parsed.netloc:
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             return False
 
         # Check extension
@@ -59,9 +58,10 @@ def is_valid_image_url(url: str) -> bool:
             "wordpress.com",
             "flickr.com",
             "staticflickr.com",
+            "fbcdn.net",
         ]
         for host in known_image_hosts:
-            if host in parsed.netloc.lower():
+            if parsed.hostname == host or (parsed.hostname or "").endswith("." + host):
                 return True
 
         return False

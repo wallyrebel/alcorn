@@ -75,6 +75,6 @@ def require_clean_article(article: dict) -> None:
         raise ContentRejectedError(reason)
     soup = BeautifulSoup(article["body"], "html.parser")
     if not soup.find("p") or any(
-        tag.name not in {"p", "strong", "em", "br"} or tag.attrs for tag in soup.find_all()
+        tag.name not in {"p", "h2", "h3", "ul", "ol", "li", "strong", "em", "br"} or tag.attrs for tag in soup.find_all()
     ):
         raise ContentRejectedError("invalid_article_html")
