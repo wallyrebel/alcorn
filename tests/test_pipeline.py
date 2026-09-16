@@ -170,3 +170,42 @@ def test_download_uses_verified_mime_and_dimensions(monkeypatch, image_bytes):
     content, filename, mime = download_image("https://example.test/misleading.png")
     assert mime == "image/jpeg" and filename.endswith(".jpg")
     assert Image.open(BytesIO(content)).size == (1200, 800)
+
+
+def test_five_post_cap_stops_further_candidates(
+    monkeypatch,
+    settings,
+    feed_config,
+    article,
+):
+    from types import SimpleNamespace
+
+    settings.max_posts_per_run = 5
+    feed_config.max_per_run = 10
+    feed = SimpleNamespace(
+        entries=[entry_for(article) | {"link": f"https://example.test/news/{i}"} for i in range(8)],
+        feed={"title": "Corinth Library on Facebook", "link": feed_config.source_url},
+    )
+    monkeypatch.setattr(cli, "parse_feed", Mock(return_value=feed))
+    store = Mock()
+    store.is_processed.return_value = False
+    store.source_seen.return_value = False
+    store.rejection_reason.return_value = None
+
+    def successful(*args, budget, **kwargs):
+        budget["candidates"] += 1
+        return {
+            "id": budget["candidates"],
+            "link": "https://example.test/article",
+            "status": "publish",
+        }
+
+    process = Mock(side_effect=successful)
+    monkeypatch.setattr(cli, "process_entry", process)
+    budget = {"posts": 0, "candidates": 0}
+    counts = cli.process_feed(
+        feed_config, settings, store, Mock(), Mock(), False, 48, Mock(), budget=budget
+    )
+    assert counts == (5, 0, 0)
+    assert process.call_count == 5
+    assert budget == {"posts": 5, "candidates": 5}

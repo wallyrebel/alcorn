@@ -12,8 +12,9 @@ from bs4 import BeautifulSoup
 from pydantic import BaseModel, ConfigDict, Field
 
 from rss_to_wp.content_policy import ContentRejectedError, plain_text, require_clean_article
+from rss_to_wp.images.pexels import stock_credit
 
-POLICY_VERSION = "quality-v1"
+POLICY_VERSION = "quality-v2-pexels"
 ALLOWED_CATEGORIES = {
     "alcorn-county-news",
     "corinth-news",
@@ -68,6 +69,20 @@ class Review(StrictModel):
     image_relevant: bool
     image_alt: str
     image_caption: str
+    quality_score: int
+    issues: list[str]
+
+
+class StockPlan(StrictModel):
+    eligible: bool
+    query: str
+    reason: str
+
+
+class StockSelection(StrictModel):
+    photo_id: int
+    relevant: bool
+    safe_illustration: bool
     quality_score: int
     issues: list[str]
 
@@ -168,8 +183,17 @@ def require_approved_review(review: Review, minimum: int) -> None:
         raise ContentRejectedError("invalid_image_description")
 
 
-def render_content(article: dict, source_url: str, source_name: str, related: list[dict]) -> str:
+def render_content(
+    article: dict,
+    source_url: str,
+    source_name: str,
+    related: list[dict],
+    image_credit: dict | None = None,
+) -> str:
     body = article["body"]
+    if image_credit:
+        # Themes do not always render featured-image captions; disclosure must be visible.
+        body = f"<p><em>{stock_credit(image_credit)}</em></p>" + body
     body += f'<p><em>Source: <a href="{escape(source_url, quote=True)}" rel="noopener">{escape(source_name)}</a>.</em></p>'
     chosen = {p["id"]: p for p in related}
     links = []

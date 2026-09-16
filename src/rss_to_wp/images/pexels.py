@@ -1,154 +1,126 @@
-"""Pexels API client for fallback images."""
+"""Bounded Pexels search; results are candidates, never automatic approval."""
 
 from __future__ import annotations
 
-import time
-from typing import Optional
+import re
+from html import escape
+from urllib.parse import urlsplit
 
 import requests
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from rss_to_wp.utils import get_logger
 
 logger = get_logger("images.pexels")
+STOCK_NOTICE = "Stock illustration; does not depict the people, place or event in this report."
+
+
+class StockPhoto(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    photo_id: int = Field(gt=0)
+    url: str
+    photo_url: str
+    photographer: str = Field(min_length=1, max_length=150)
+    photographer_url: str
+    description: str = Field(max_length=1000)
+    width: int = Field(ge=1200)
+    height: int = Field(ge=600)
+
+    @field_validator("url", "photo_url", "photographer_url")
+    @classmethod
+    def trusted_url(cls, value, info):
+        parts = urlsplit(value)
+        hosts = (
+            {"images.pexels.com"} if info.field_name == "url" else {"www.pexels.com", "pexels.com"}
+        )
+        if (
+            parts.scheme != "https"
+            or parts.hostname not in hosts
+            or parts.username
+            or parts.password
+            or parts.port not in {None, 443}
+        ):
+            raise ValueError("Untrusted Pexels URL")
+        prefix = {"url": "/photos/", "photo_url": "/photo/", "photographer_url": "/@"}
+        if not parts.path.startswith(prefix[info.field_name]):
+            raise ValueError("Unexpected Pexels URL path")
+        return value
+
+
+def stock_credit(photo: dict) -> str:
+    photo = StockPhoto.model_validate(photo)
+    return (
+        STOCK_NOTICE + " Photo by "
+        f'<a href="{escape(photo.photographer_url, quote=True)}" rel="noopener">'
+        f"{escape(photo.photographer)}</a> on "
+        f'<a href="{escape(photo.photo_url, quote=True)}" rel="noopener">Pexels</a>.'
+    )
+
+
+def stock_topic_blocked(title: str, text: str) -> bool:
+    """Hard exclusions supplement (never replace) the editor's contextual decision."""
+    return bool(
+        re.search(
+            r"\b(?:arrest\w*|suspect\w*|victim\w*|crime\w*|criminal\w*|police|sheriff\w*|"
+            r"shooting\w*|homicide\w*|murder\w*|missing|abduct\w*|assault\w*|fatal\w*|"
+            r"dead|death\w*|killed|disaster\w*|tornado\w*|hurricane\w*|wildfire\w*|"
+            r"flood\w*|evacuat\w*|warning\w*|election\w*|politic\w*|ballot\w*|"
+            r"candidate\w*|campaign\w*|abuse\w*|addict\w*|disease\w*|patient\w*|"
+            r"cancer|overdose\w*|suicid\w*|sex\w*)\b",
+            title + " " + text,
+            re.I,
+        )
+    )
 
 
 class PexelsClient:
-    """Client for Pexels image search API."""
-
     BASE_URL = "https://api.pexels.com/v1"
 
     def __init__(self, api_key: str):
-        """Initialize Pexels client.
-
-        Args:
-            api_key: Pexels API key.
-        """
-        self.api_key = api_key
         self.session = requests.Session()
-        self.session.headers.update({
-            "Authorization": api_key,
-        })
-        self._last_request_time = 0.0
+        self.session.headers.update({"Authorization": api_key})
 
-    def _rate_limit(self) -> None:
-        """Ensure we don't exceed rate limits."""
-        min_interval = 0.5  # 2 requests per second max
-        elapsed = time.time() - self._last_request_time
-        if elapsed < min_interval:
-            time.sleep(min_interval - elapsed)
-        self._last_request_time = time.time()
-
-    def search(
-        self,
-        query: str,
-        per_page: int = 5,
-        orientation: str = "landscape",
-    ) -> Optional[dict]:
-        """Search for images on Pexels.
-
-        Args:
-            query: Search query string.
-            per_page: Number of results to fetch.
-            orientation: Image orientation (landscape, portrait, square).
-
-        Returns:
-            Dictionary with image URL and attribution, or None.
-        """
-        self._rate_limit()
-
-        # Clean up query - remove special characters
-        clean_query = " ".join(query.split()[:5])  # Max 5 words
-
-        logger.info("pexels_search", query=clean_query)
-
+    def search(self, query: str) -> list[dict]:
+        """One request, at most four landscape candidates. No curated/random fallback."""
+        if not re.fullmatch(r"[A-Za-z][A-Za-z -]{4,79}", query) or not 2 <= len(query.split()) <= 6:
+            raise ValueError("Pexels requires a specific 2-6 word subject query")
+        response = self.session.get(
+            f"{self.BASE_URL}/search",
+            params={"query": query, "per_page": 4, "orientation": "landscape", "locale": "en-US"},
+            timeout=(10, 30),
+            allow_redirects=False,
+        )
         try:
-            response = self.session.get(
-                f"{self.BASE_URL}/search",
-                params={
-                    "query": clean_query,
-                    "per_page": per_page,
-                    "orientation": orientation,
-                },
-                timeout=(10, 30),
-            )
             response.raise_for_status()
+            if response.status_code != 200:
+                raise RuntimeError("Unexpected Pexels response; no image approved")
             data = response.json()
-
-            if not data.get("photos"):
-                logger.info("pexels_no_results", query=clean_query)
-                return None
-
-            # Get first photo
-            photo = data["photos"][0]
-
-            # Get best size - prefer large
-            image_url = photo["src"].get("large") or photo["src"].get("medium")
-            photographer = photo.get("photographer", "Unknown")
-
-            result = {
-                "url": image_url,
-                "photographer": photographer,
-                "source": "Pexels",
-                "alt_text": f"Photo by {photographer} on Pexels",
-                "photo_id": photo.get("id"),
-                "photographer_url": photo.get("photographer_url", ""),
-            }
-
-            logger.info(
-                "pexels_image_found",
-                url=image_url,
-                photographer=photographer,
-            )
-
-            return result
-
-        except requests.exceptions.HTTPError as e:
-            logger.error("pexels_http_error", error=str(e), status=e.response.status_code)
-            return None
-        except requests.exceptions.RequestException as e:
-            logger.error("pexels_request_error", error=str(e))
-            return None
-        except Exception as e:
-            logger.error("pexels_error", error=str(e))
-            return None
-
-    def get_curated(self, per_page: int = 5) -> Optional[dict]:
-        """Get curated photos as a fallback.
-
-        Args:
-            per_page: Number of results to fetch.
-
-        Returns:
-            Dictionary with image URL and attribution, or None.
-        """
-        self._rate_limit()
-
-        logger.info("pexels_curated_search")
-
-        try:
-            response = self.session.get(
-                f"{self.BASE_URL}/curated",
-                params={"per_page": per_page},
-                timeout=(10, 30),
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            if not data.get("photos"):
-                return None
-
-            # Get first photo
-            photo = data["photos"][0]
-            image_url = photo["src"].get("large") or photo["src"].get("medium")
-            photographer = photo.get("photographer", "Unknown")
-
-            return {
-                "url": image_url,
-                "photographer": photographer,
-                "source": "Pexels",
-                "alt_text": f"Photo by {photographer} on Pexels",
-            }
-
-        except Exception as e:
-            logger.error("pexels_curated_error", error=str(e))
-            return None
+        finally:
+            response.close()
+        if not isinstance(data, dict) or not isinstance(data.get("photos"), list):
+            raise RuntimeError("Malformed Pexels search response")
+        candidates, seen = [], set()
+        for photo in data["photos"][:4]:
+            try:
+                candidate = StockPhoto(
+                    photo_id=photo["id"],
+                    url=photo["src"][
+                        "large2x"
+                        if photo["width"] >= 1880 and photo["height"] >= 1300
+                        else "original"
+                    ],
+                    photo_url=photo["url"],
+                    photographer=photo["photographer"],
+                    photographer_url=photo["photographer_url"],
+                    description=photo.get("alt", ""),
+                    width=photo["width"],
+                    height=photo["height"],
+                )
+                if candidate.width <= candidate.height or candidate.photo_id in seen:
+                    continue
+                seen.add(candidate.photo_id)
+                candidates.append(candidate.model_dump())
+            except (KeyError, TypeError, ValueError):
+                logger.info("pexels_candidate_invalid")
+        return candidates

@@ -22,6 +22,7 @@ def settings():
         wordpress_base_url="https://example.test",
         wordpress_username="unused",
         wordpress_app_password="unused",
+        pexels_api_key=None,
     )
 
 

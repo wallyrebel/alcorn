@@ -32,6 +32,7 @@ from rss_to_wp.feeds import (
 )
 from rss_to_wp.feeds.filter import parse_entry_date
 from rss_to_wp.images import download_image, find_rss_image
+from rss_to_wp.images.pexels import PexelsClient, stock_credit
 from rss_to_wp.local_categories import additional_local_categories
 from rss_to_wp.rewriter import OpenAIRewriter
 from rss_to_wp.storage import DedupeStore
@@ -251,13 +252,11 @@ def process_entry(
         if any(similar_story(title, p["title"]) for p in related):
             return {"duplicate": True, "reason": "story_already_covered"}
         image_url = find_rss_image(entry, base_url=link)
-        if not image_url:
-            raise ContentRejectedError("source_image_required")
-        image_result = download_image(image_url)
-        if not image_result:
-            # A CDN outage can recover; do not cache it as an editorial rejection.
-            return {"skipped": True, "reason": "source_image_unavailable_or_undersized"}
-        image_bytes, _, _ = image_result
+        image_result = download_image(image_url) if image_url else None
+        image_credit = None
+        if not image_result and not settings.pexels_api_key:
+            # A CDN outage or new API key can recover; do not cache this rejection.
+            return {"skipped": True, "reason": "no_usable_source_image_or_pexels_key"}
         budget["candidates"] += 1
         context = {
             "source_name": feed_config.source_name,
@@ -272,6 +271,23 @@ def process_entry(
                 settings.wordpress_base_url, title, content
             ),
         }
+        if not image_result:
+            plan = rewriter.plan_stock_image(title, content, context)
+            photos = PexelsClient(settings.pexels_api_key).search(plan.query)
+            candidates = []
+            for photo in photos:
+                downloaded = download_image(photo["url"], allowed_hosts={"images.pexels.com"})
+                if downloaded:
+                    candidates.append({"photo": photo, "bytes": downloaded[0]})
+            selected = rewriter.select_stock_image(title, content, plan, candidates)
+            if not selected:
+                return {"skipped": True, "reason": "no_suitable_pexels_illustration"}
+            image_credit, image_bytes = selected["photo"], selected["bytes"]
+            image_url = image_credit["url"]
+            context["image_provenance"] = {"kind": "pexels_stock", **image_credit}
+        else:
+            image_bytes = image_result[0]
+            context["image_provenance"] = {"kind": "source", "url": image_url}
         article = rewriter.rewrite(
             content,
             title,
@@ -287,11 +303,18 @@ def process_entry(
                 "preview": True,
                 "article": article,
                 "image_url": image_url,
-                "content": render_content(article, link, feed_config.source_name, related),
+                "image_credit": image_credit,
+                "content": render_content(
+                    article, link, feed_config.source_name, related, image_credit
+                ),
             }
         caption = escape(article["review"]["image_caption"])
         caption += (
-            f' Source: <a href="{escape(link, quote=True)}">{escape(feed_config.source_name)}</a>.'
+            " " + stock_credit(image_credit)
+            if image_credit
+            else (
+                f' Source: <a href="{escape(link, quote=True)}">{escape(feed_config.source_name)}</a>.'
+            )
         )
         media_id = wp_client.upload_media(
             image_bytes, article["slug"] + ".jpg", article["review"]["image_alt"], caption=caption
@@ -304,6 +327,7 @@ def process_entry(
             source_name=feed_config.source_name,
             related=related,
             featured_media_id=media_id,
+            image_credit=image_credit,
         )
         return {k: post[k] for k in ("id", "link", "status", "duplicate") if k in post}
     except ContentRejectedError as exc:

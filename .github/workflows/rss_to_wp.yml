@@ -53,8 +53,9 @@ jobs:
           # Variables override defaults; legacy nano model secrets are not used.
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5-mini' }}
           OPENAI_REVIEW_MODEL: ${{ vars.OPENAI_REVIEW_MODEL || 'gpt-5-mini' }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           MAX_CANDIDATES_PER_RUN: '6'
-          MAX_POSTS_PER_RUN: '2'
+          MAX_POSTS_PER_RUN: '5'
           WORDPRESS_BASE_URL: ${{ secrets.WORDPRESS_BASE_URL }}
           WORDPRESS_USERNAME: ${{ secrets.WORDPRESS_USERNAME }}
           WORDPRESS_APP_PASSWORD: ${{ secrets.WORDPRESS_APP_PASSWORD }}

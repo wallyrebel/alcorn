@@ -252,7 +252,16 @@ class WordPressClient:
             raise RuntimeError("SEOPress did not confirm metadata write")
         return data
 
-    def create_post(self, *, article, source_url, source_name, related, featured_media_id):
+    def create_post(
+        self,
+        *,
+        article,
+        source_url,
+        source_name,
+        related,
+        featured_media_id,
+        image_credit=None,
+    ):
         core = {k: v for k, v in article.items() if k != "review"}
         validate_article(core, self.categories, related, self.min_article_words)
         review = Review.model_validate(article["review"])
@@ -292,7 +301,7 @@ class WordPressClient:
             for slug in article["category_slugs"]
         ]
         marker = hashlib.sha256(source_url.encode()).hexdigest()[:12]
-        content = render_content(article, source_url, source_name, related)
+        content = render_content(article, source_url, source_name, related, image_credit)
         content += f"<!-- rss-to-wp:quality-v1:{marker} -->"
         payload = {
             "title": article["headline"],

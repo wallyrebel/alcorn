@@ -53,7 +53,7 @@ class AppSettings(BaseSettings):
     openai_model: str = Field(default="gpt-5-mini", description="Affordable writing model")
     openai_review_model: str = "gpt-5-mini"
     max_candidates_per_run: int = Field(default=6, ge=1, le=30)
-    max_posts_per_run: int = Field(default=2, ge=1, le=10)
+    max_posts_per_run: int = Field(default=5, ge=1, le=10)
     min_source_words: int = Field(default=80, ge=50)
     min_article_words: int = Field(default=150, ge=100)
     min_quality_score: int = Field(default=90, ge=85, le=100)
