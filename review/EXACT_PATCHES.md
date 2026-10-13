@@ -2,13 +2,9 @@
 
 Read-only authenticated preflight. No WordPress writes or media uploads performed.
 
-The JSON receipt binds each post identity, original revision, raw fields and proposed payload to SHA-256 hashes. Any later apply must re-read and compare the full before snapshot; stop on a mismatch or 403. Preserve dates, slugs, authors, statuses, categories, tags, media and all unlisted fields.
-
-## Managed account
-
 {"capabilities": {"edit_others_posts": true, "edit_posts": true, "edit_published_posts": true, "upload_files": true}, "id": 1}
 
-Capability checks support eligibility; actual REST writes are unverified.
+Capability checks establish eligibility; successful REST writes remain unverified. Any later apply must re-read and compare the full before snapshot including revision, and stop on a mismatch or 403.
 
 ## Post 12909
 
@@ -16,9 +12,7 @@ https://alcornnewsms.com/alcorn-county-news/the-5-best-hunting-day-packs-for-alc
 
 - Before snapshot SHA-256: `4528b34cacaeed6caeb4e42fe03db03444dc03259a82dde40c42eba2957fc97e`
 - Payload SHA-256: `5fcfeab8c7f985ce4696e9a2123b3f8e0c0c92f977e4ab53b02fa12c64aee189`
-- Proposed snapshot SHA-256: `3bec0bf89aa166c9afde2a584958fd888b6337aa6971982f508be9154af4ea01`
-- Existing author ID: 1; owned by account: True
-- Ready: True
+- Owned by account: True
 
 ### content
 
@@ -51,10 +45,8 @@ https://alcornnewsms.com/alcorn-county-news/the-5-best-hunting-day-packs-for-alc
 https://alcornnewsms.com/alcorn-county-news/the-5-best-pumpkin-carving-kits-for-alcorn-county-families/
 
 - Before snapshot SHA-256: `6646f7aa7c3e81ea9dade6d0564090ff8bf4ed115ad4f3ac61d6b918567fc824`
-- Payload SHA-256: `4cc91fadcf06fe51584b4a3e8259323acb52a571f42ca5e98582d82825eed776`
-- Proposed snapshot SHA-256: `fefb51c85382b708b874c8c01dcd39b063b06235d4f042a5e7886466fc8259d1`
-- Existing author ID: 1; owned by account: True
-- Ready: True
+- Payload SHA-256: `e95a6e5d324bff1454b226777f0995779afbb5c22fee954008ecf47eda687c65`
+- Owned by account: True
 
 ### content
 
@@ -126,12 +118,21 @@ https://alcornnewsms.com/alcorn-county-news/the-5-best-pumpkin-carving-kits-for-
 +<p><em>Correction (Oct. 13, 2026): The NFEVER kit contains seven carving tools and 15 stencils. Earlier descriptions overstated child safety; cutting tools are not injury-proof, and small children should decorate while adults carve.</em></p>
 ```
 
+### excerpt
+
+```diff
+--- before
++++ proposed
+@@ -1 +1 @@
+-From a basic porch set to a deluxe stencil kit with lights, these five well-reviewed pumpkin carving kits on Amazon have everything Alcorn County families need for jack-o'-lantern night.+Compare five pumpkin-carving kits for adults planning a family decorating night, with included-tool details and guidance for children’s participation.
+```
+
 ### Sources and scope
 
 - https://www.amazon.com/dp/B0FGCPN533/
 - https://www.healthychildren.org/English/safety-prevention/all-around/Pages/Halloween-Safety-Tips.aspx
-Product listing independently confirms 7tools+15stencils; do not retain guarantee of tools not cutting skin.
+Product listing confirms seven tools plus 15 stencils. AAP guidance supports adult carving and children decorating. The excerpt also removes the unsupported included-lights and everything-you-need promise.
 
 ## Later application boundary
 
-Use the payload digest to bind approved JSON and the before-snapshot digest to detect concurrent edits. The proposed-snapshot hash is a planning fingerprint, not the expected live rendered response: WordPress rendering must be verified separately after any approved write. No apply route exists on this review branch. After approved verified application, retire any one-shot mutation route created for it.
+Bind approved JSON to the payload digest, and detect concurrent edits with the before-snapshot digest. The proposed-snapshot hash is a planning fingerprint; verify live WordPress rendering separately after any approved write. Preserve all unlisted fields. No apply route exists on this review branch. Retire any later one-shot mutation route after verified success.
