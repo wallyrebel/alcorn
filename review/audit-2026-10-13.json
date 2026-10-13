@@ -27,7 +27,10 @@
       },
       "sources": [
         "https://www.badlandsgear.com/products/atx-12"
-      ]
+      ],
+      "append": {
+        "content": "<p><em>Correction (Oct. 13, 2026): SWAP is Badlands’ accessory system, separate from hydration-reservoir compatibility. The ATX 12 description has been corrected to match the manufacturer’s current specifications.</em></p>"
+      }
     },
     {
       "id": 12879,
@@ -40,32 +43,32 @@
       "replacements": {
         "content": [
           {
-            "old": "22 stainless pieces with 15 stencils",
-            "new": "7 stainless steel carving tools and 15 stencils",
+            "old": "We rounded up five well-reviewed pumpkin carving kits on Amazon, from a budget basic set to a deluxe kit with lights.",
+            "new": "We rounded up five pumpkin carving kits on Amazon for adults planning a family pumpkin-decorating night.",
             "count": 1
           },
           {
-            "old": "22 pieces: stainless steel carving tools plus 15 stencils",
-            "new": "22 pieces: 7 stainless steel carving tools and 15 stencils",
+            "old": "The five picks below cover little kids, beginners, and folks who carve a whole row of porch pumpkins every October.",
+            "new": "Adults can handle the carving while small children help with designs, decorating and scooping out pulp and seeds.",
             "count": 1
           },
           {
-            "old": "Kid-safe kits use serrated plastic saws that cut pumpkin but not skin.",
-            "new": "Carving saws and detail tools can cause injury; follow the manufacturer’s age and safety instructions.",
-            "count": 1
-          },
-          {
-            "old": "it’s a top-100 seller in its category for a reason — a strong pick when the whole family wants in on pumpkin night.",
-            "new": "check the current listing for the set’s included components before buying.",
+            "old": "The all-rounder: 22 stainless pieces with 15 stencils and a carry bag that keeps it all together until next October. Serrated blades cut cleanly through thick pumpkin walls, and it’s a top-100 seller in its category for a reason — a strong pick when the whole family wants in on pumpkin night.",
+            "new": "The NFEVER kit includes seven stainless steel carving tools, 15 stencils and a carrying bag. Its advertised 22-piece count combines the tools and stencils; it does not mean 22 steel tools.",
             "count": 1,
             "variants": [
-              "it's a top-100 seller in its category for a reason — a strong pick when the whole family wants in on pumpkin night.",
-              "it&#8217;s a top-100 seller in its category for a reason — a strong pick when the whole family wants in on pumpkin night."
+              "The all-rounder: 22 stainless pieces with 15 stencils and a carry bag that keeps it all together until next October. Serrated blades cut cleanly through thick pumpkin walls, and it's a top-100 seller in its category for a reason — a strong pick when the whole family wants in on pumpkin night.",
+              "The all-rounder: 22 stainless pieces with 15 stencils and a carry bag that keeps it all together until next October. Serrated blades cut cleanly through thick pumpkin walls, and it&#8217;s a top-100 seller in its category for a reason — a strong pick when the whole family wants in on pumpkin night."
             ]
           },
           {
+            "old": "22 pieces: stainless steel carving tools plus 15 stencils",
+            "new": "Seven stainless steel carving tools plus 15 stencils; storage bag included",
+            "count": 1
+          },
+          {
             "old": "Serrated blades; strong seller (#110) in Amazon’s Carving Sets category",
-            "new": "Serrated blades; check the current product listing for details",
+            "new": "Serrated carving blades; follow the manufacturer’s warnings",
             "count": 1,
             "variants": [
               "Serrated blades; strong seller (#110) in Amazon's Carving Sets category",
@@ -73,21 +76,72 @@
             ]
           },
           {
-            "old": "safe for kids with an adult nearby.",
-            "new": "intended to be used according to the manufacturer’s instructions.",
+            "old": "and the patterned handles give little hands a better grip — a smart starter set for beginners.",
+            "new": "and the patterned handles provide a textured grip. Adults should do the cutting.",
             "count": 1
           },
           {
-            "old": "kid-safe with adult supervision",
-            "new": "follow the manufacturer’s age and safety instructions",
+            "old": "Sturdy patterned handles; good for beginners and kids with supervision",
+            "new": "Sturdy patterned handles; follow the manufacturer’s age guidance and warnings",
             "count": 1
+          },
+          {
+            "old": "The kid-friendly pick: instead of sawing, you pound stainless stencils into the pumpkin with the included mallet — no sharp-knife carving required. With 23 stencils and 3 carving tools in the 27-piece set, it’s built for families with young carvers.",
+            "new": "The pound-in stencil option uses a mallet to press metal shapes into the pumpkin. The 27-piece set contains 23 stencils, three carving tools and a mallet. Adults should handle the cutting and hammering.",
+            "count": 1,
+            "variants": [
+              "The kid-friendly pick: instead of sawing, you pound stainless stencils into the pumpkin with the included mallet — no sharp-knife carving required. With 23 stencils and 3 carving tools in the 27-piece set, it's built for families with young carvers.",
+              "The kid-friendly pick: instead of sawing, you pound stainless stencils into the pumpkin with the included mallet — no sharp-knife carving required. With 23 stencils and 3 carving tools in the 27-piece set, it&#8217;s built for families with young carvers."
+            ]
+          },
+          {
+            "old": "Pound-in stencil method — easier than sawing, good for kids",
+            "new": "Pound-in stencil method; adult use and manufacturer warnings apply",
+            "count": 1
+          },
+          {
+            "old": "Compact, portable, and safe for kids with an adult nearby.",
+            "new": "Compact and portable; follow the manufacturer’s age guidance and warnings, and leave cutting to adults.",
+            "count": 1
+          },
+          {
+            "old": "Stainless steel serrated blades; kid-safe with adult supervision",
+            "new": "Stainless steel serrated blades; adult cutting tools",
+            "count": 1
+          },
+          {
+            "old": "Count the carvers.</strong> One basic kit covers one pumpkin comfortably. Hosting the grandkids or a classroom? Look for family-sized or multi-packs so nobody’s waiting on a saw.",
+            "new": "Count the adult carvers.</strong> Choose enough tools for the adults who will do the cutting, and set out separate decorating supplies for children.",
+            "count": 1,
+            "variants": [
+              "Count the carvers.</strong> One basic kit covers one pumpkin comfortably. Hosting the grandkids or a classroom? Look for family-sized or multi-packs so nobody's waiting on a saw.",
+              "Count the carvers.</strong> One basic kit covers one pumpkin comfortably. Hosting the grandkids or a classroom? Look for family-sized or multi-packs so nobody&#8217;s waiting on a saw."
+            ]
+          },
+          {
+            "old": "Safety first for little hands.</strong> Kid-safe kits use serrated plastic saws that cut pumpkin but not skin. Keep the sharp detail tools for the grown-ups.",
+            "new": "Safety first.</strong> No cutting tool should be treated as injury-proof. The <a href=\"https://www.healthychildren.org/English/safety-prevention/all-around/Pages/Halloween-Safety-Tips.aspx\">American Academy of Pediatrics</a> advises letting small children decorate pumpkins and leaving carving and cutting to adults. Follow each manufacturer’s age restrictions and warnings.",
+            "count": 1
+          },
+          {
+            "old": "Don’t forget the light.</strong> Kits that include battery LED candles or flameless lights mean the pumpkin glows all night without a fire worry on a dry October porch.",
+            "new": "Don’t forget the light.</strong> Consider a battery-operated flameless candle or flashlight instead of an open flame. Check whether a light is included or must be purchased separately.",
+            "count": 1,
+            "variants": [
+              "Don't forget the light.</strong> Kits that include battery LED candles or flameless lights mean the pumpkin glows all night without a fire worry on a dry October porch.",
+              "Don&#8217;t forget the light.</strong> Kits that include battery LED candles or flameless lights mean the pumpkin glows all night without a fire worry on a dry October porch."
+            ]
           }
         ]
       },
       "sources": [
-        "https://www.amazon.com/dp/B0FGCPN533/"
+        "https://www.amazon.com/dp/B0FGCPN533/",
+        "https://www.healthychildren.org/English/safety-prevention/all-around/Pages/Halloween-Safety-Tips.aspx"
       ],
-      "note": "Product listing independently confirms 7tools+15stencils; do not retain guarantee of tools not cutting skin."
+      "note": "Product listing independently confirms 7tools+15stencils; do not retain guarantee of tools not cutting skin.",
+      "append": {
+        "content": "<p><em>Correction (Oct. 13, 2026): The NFEVER kit contains seven carving tools and 15 stencils. Earlier descriptions overstated child safety; cutting tools are not injury-proof, and small children should decorate while adults carve.</em></p>"
+      }
     }
   ]
 }
