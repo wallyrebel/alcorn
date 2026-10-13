@@ -1,7 +1,8 @@
 import copy
-import unittest
 import importlib.util
+import unittest
 from pathlib import Path
+
 spec = importlib.util.spec_from_file_location('audit', Path(__file__).resolve().parents[1] / 'scripts/audit_preflight.py')
 audit = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(audit)
