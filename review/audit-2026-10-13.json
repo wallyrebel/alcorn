@@ -1,0 +1,93 @@
+{
+  "site": "https://alcornnewsms.com",
+  "repository": "wallyrebel/alcorn",
+  "mode": "read-only",
+  "posts": [
+    {
+      "id": 12909,
+      "link": "https://alcornnewsms.com/alcorn-county-news/the-5-best-hunting-day-packs-for-alcorn-county-deer-season/",
+      "rendered_sha256": {
+        "title": "8e038d19684d7e323eaaca61f94367a929bd2604a64e56af7ceecc82f30b1959",
+        "excerpt": "31bc9a5bc05171d181cee6a432ff947c075b300aadd2cbc872ffe7a3ad7a779a",
+        "content": "43b8f5c93d1418679f2a89eba870c6ccb9b62ab1718128ef559e2c363e5e7a51"
+      },
+      "replacements": {
+        "content": [
+          {
+            "old": "SWAP hydration system, weather-resistant, suspended comfort frame.",
+            "new": "SWAP accessory-system compatible, hydration-reservoir compatible, water-resistant.",
+            "count": 1
+          },
+          {
+            "old": "with a weather-resistant shell and a comfortable suspended frame.",
+            "new": "with a water-resistant shell.",
+            "count": 1
+          }
+        ]
+      },
+      "sources": [
+        "https://www.badlandsgear.com/products/atx-12"
+      ]
+    },
+    {
+      "id": 12879,
+      "link": "https://alcornnewsms.com/alcorn-county-news/the-5-best-pumpkin-carving-kits-for-alcorn-county-families/",
+      "rendered_sha256": {
+        "title": "ba84150450b9d1100246debcfefbd374e2fd798ed0ba33eee1f7bfa8ceb34c0d",
+        "excerpt": "0030c29c19fa7bcf8e8c3fed508bec185c7c4de56bd669af62074a75434183eb",
+        "content": "f19e2f7f162fc7ada386f8861685cbc782ec90f7a2eefebab96a442b4029869c"
+      },
+      "replacements": {
+        "content": [
+          {
+            "old": "22 stainless pieces with 15 stencils",
+            "new": "7 stainless steel carving tools and 15 stencils",
+            "count": 1
+          },
+          {
+            "old": "22 pieces: stainless steel carving tools plus 15 stencils",
+            "new": "22 pieces: 7 stainless steel carving tools and 15 stencils",
+            "count": 1
+          },
+          {
+            "old": "Kid-safe kits use serrated plastic saws that cut pumpkin but not skin.",
+            "new": "Carving saws and detail tools can cause injury; follow the manufacturer’s age and safety instructions.",
+            "count": 1
+          },
+          {
+            "old": "it’s a top-100 seller in its category for a reason — a strong pick when the whole family wants in on pumpkin night.",
+            "new": "check the current listing for the set’s included components before buying.",
+            "count": 1,
+            "variants": [
+              "it's a top-100 seller in its category for a reason — a strong pick when the whole family wants in on pumpkin night.",
+              "it&#8217;s a top-100 seller in its category for a reason — a strong pick when the whole family wants in on pumpkin night."
+            ]
+          },
+          {
+            "old": "Serrated blades; strong seller (#110) in Amazon’s Carving Sets category",
+            "new": "Serrated blades; check the current product listing for details",
+            "count": 1,
+            "variants": [
+              "Serrated blades; strong seller (#110) in Amazon's Carving Sets category",
+              "Serrated blades; strong seller (#110) in Amazon&#8217;s Carving Sets category"
+            ]
+          },
+          {
+            "old": "safe for kids with an adult nearby.",
+            "new": "intended to be used according to the manufacturer’s instructions.",
+            "count": 1
+          },
+          {
+            "old": "kid-safe with adult supervision",
+            "new": "follow the manufacturer’s age and safety instructions",
+            "count": 1
+          }
+        ]
+      },
+      "sources": [
+        "https://www.amazon.com/dp/B0FGCPN533/"
+      ],
+      "note": "Product listing independently confirms 7tools+15stencils; do not retain guarantee of tools not cutting skin."
+    }
+  ]
+}
