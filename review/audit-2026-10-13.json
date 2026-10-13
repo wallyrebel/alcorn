@@ -138,9 +138,12 @@
         "https://www.amazon.com/dp/B0FGCPN533/",
         "https://www.healthychildren.org/English/safety-prevention/all-around/Pages/Halloween-Safety-Tips.aspx"
       ],
-      "note": "Product listing independently confirms 7tools+15stencils; do not retain guarantee of tools not cutting skin.",
+      "note": "Product listing confirms seven tools plus 15 stencils. AAP guidance supports adult carving and children decorating. The excerpt also removes the unsupported included-lights and everything-you-need promise.",
       "append": {
         "content": "<p><em>Correction (Oct. 13, 2026): The NFEVER kit contains seven carving tools and 15 stencils. Earlier descriptions overstated child safety; cutting tools are not injury-proof, and small children should decorate while adults carve.</em></p>"
+      },
+      "set": {
+        "excerpt": "Compare five pumpkin-carving kits for adults planning a family decorating night, with included-tool details and guidance for children’s participation."
       }
     }
   ]
