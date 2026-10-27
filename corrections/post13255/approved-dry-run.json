@@ -1,0 +1,51 @@
+{
+  "state": "dry_run_verified",
+  "repository": "wallyrebel/alcorn",
+  "host": "alcornnewsms.com",
+  "post_id": 13255,
+  "stage": "dry-run",
+  "payload_sha256": "11228ec94ad36b47f6eb96a758a9410f22961b3de6eba9a0518bfc5e151474b5",
+  "ledger_sha256": "3b6f1a174bf81f67b5c552f183850940021161efcd3268ab1461d53b912b6d2a",
+  "implementation_sha256": "2f31566bde136710036be629601ca09aa0c560e6a4228ee8a556d05817f26107",
+  "run_id": "40536908894",
+  "commit": "e25aecd3133aff7c751e5cea997423d14a0e7667",
+  "writes_attempted": 0,
+  "raw_payload_sha256": "6b66a9d187a3bb8b271030cc222248ae5fab22207dbfc36c61979f4bedf0a934",
+  "before_raw_sha256": {
+    "title": "e5986474dd4a7b77ca3bfdc75fa4f0cb8984b0d5ac777e0a567aeb8b1ffced86",
+    "content": "800074716cc13a90c14ed7d57b3ef523eba5e98701f4c3ec4f5a7c68656349e5",
+    "excerpt": "3835ffef3ceb4aa38141c41d1feea86785aaff215ca6a59c41c14c68d743a9d7"
+  },
+  "before_rendered_sha256": {
+    "title": "e5986474dd4a7b77ca3bfdc75fa4f0cb8984b0d5ac777e0a567aeb8b1ffced86",
+    "content": "a69723f97b42396256a0474b289ecfeeda89bef4de68744282ed75c65cdfd41e",
+    "excerpt": "ea502514b574cf215c7afbde13f4b740217938efb6ec3e42773024e88c02cda8"
+  },
+  "before_modified_gmt": "2026-10-27T11:14:38",
+  "before_identity": {
+    "id": 13255,
+    "status": "publish",
+    "slug": "the-5-best-ground-blinds-for-alcorn-county-deer-season",
+    "link": "https://alcornnewsms.com/alcorn-county-news/the-5-best-ground-blinds-for-alcorn-county-deer-season/",
+    "date": "2026-10-27T06:14:38",
+    "date_gmt": "2026-10-27T11:14:38",
+    "author": 1,
+    "featured_media": 13254,
+    "categories": [
+      3
+    ],
+    "tags": [
+      303,
+      1149,
+      1206,
+      1578,
+      1579,
+      1154
+    ],
+    "comment_status": "open",
+    "ping_status": "closed",
+    "sticky": false,
+    "template": "",
+    "format": "standard"
+  }
+}
