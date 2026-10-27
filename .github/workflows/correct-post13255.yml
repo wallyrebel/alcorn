@@ -1,0 +1,41 @@
+name: Fixed reviewed correction for post 13255
+on:
+  push:
+    branches: [codex/clean-post13255-20261027]
+    paths:
+      - .github/workflows/correct-post13255.yml
+      - scripts/correct_post13255.py
+      - tests/test_fixed_post13255.py
+      - corrections/post13255/**
+permissions:
+  contents: read
+concurrency:
+  group: alcorn-post13255-reviewed-correction
+  cancel-in-progress: false
+jobs:
+  correct-fixed-post:
+    if: github.repository == 'wallyrebel/alcorn' && github.ref == 'refs/heads/codex/clean-post13255-20261027'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Offline fixed-target regression tests
+        run: python -m unittest discover -s tests -p 'test_fixed_post13255.py' -v
+      - name: Fixed reviewed correction stage
+        env:
+          WORDPRESS_BASE_URL: ${{ secrets.WORDPRESS_BASE_URL }}
+          WORDPRESS_USERNAME: ${{ secrets.WORDPRESS_USERNAME }}
+          WORDPRESS_APP_PASSWORD: ${{ secrets.WORDPRESS_APP_PASSWORD }}
+        run: python scripts/correct_post13255.py
+      - name: Save sanitized correction receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixed-post13255-${{ github.run_id }}
+          path: data/correction-post13255/result.json
+          retention-days: 30

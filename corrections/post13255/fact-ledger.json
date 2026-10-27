@@ -1,0 +1,13 @@
+{
+  "post_id": 13255,
+  "scope": "Delete exactly five internal price-confirmation notes only. Preserve all existing prices,as-of dates,product claims,links and images; no new claims or factual correction note.",
+  "licensing_review": "No no-derivatives,republication or other third-party article notice in current body. Publisher-authored affiliate guide; product copy and image rights untouched.",
+  "removal": {
+    "text": "; confirm live price at publish",
+    "replacement": "",
+    "count": 5
+  },
+  "source_snapshot_sha256": "a69723f97b42396256a0474b289ecfeeda89bef4de68744282ed75c65cdfd41e",
+  "reviewed_before_modified_gmt": "2026-10-27T11:14:38",
+  "expected_after_rendered_sha256": "6ba4df35946d41643fbcee93ff0fe0562ba72080dee10b29a3f3961c948e5a8e"
+}
