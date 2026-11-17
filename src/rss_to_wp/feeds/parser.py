@@ -7,7 +7,7 @@ from typing import Any, Optional
 import feedparser
 import requests
 
-from rss_to_wp.feeds import corinth
+from rss_to_wp.feeds import corinth, magnolia
 from rss_to_wp.utils import get_logger
 
 logger = get_logger("feeds.parser")
@@ -27,6 +27,10 @@ def parse_feed(url: str) -> Optional[dict[str, Any]]:
     try:
         response = requests.get(url, timeout=(10, 30), headers={"User-Agent": "AlcornNewsRSS/2.0"})
         response.raise_for_status()
+        if url == magnolia.NEWS:
+            if response.history or response.status_code != 200:
+                raise ValueError("Magnolia Regional news archive moved")
+            return magnolia.releases(response.json())
         if url == corinth.NEWS:
             if response.url.rstrip("/") != corinth.NEWS:
                 raise ValueError("Corinth School District news index moved")

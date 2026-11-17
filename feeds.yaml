@@ -1,5 +1,11 @@
 # Verified source identity; categories and tags are selected per article.
 feeds:
+- name: Magnolia Regional Health Center newsroom
+  url: https://www.mrhc.org/wp-json/wp/v2/posts?categories=1&per_page=20&_fields=id,date_gmt,status,link,title,content,categories
+  source_name: Magnolia Regional Health Center
+  source_url: https://www.mrhc.org
+  max_per_run: 3
+  primary_source: true
 - name: Corinth School District newsroom
   url: https://www.corinth.k12.ms.us/connect/news
   source_name: Corinth School District
