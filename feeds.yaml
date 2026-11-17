@@ -1,5 +1,11 @@
 # Verified source identity; categories and tags are selected per article.
 feeds:
+- name: Corinth School District newsroom
+  url: https://www.corinth.k12.ms.us/connect/news
+  source_name: Corinth School District
+  source_url: https://www.corinth.k12.ms.us
+  max_per_run: 3
+  primary_source: true
 - name: Local Feed 1
   url: https://fetchrss.com/feed/1vcaujD2G3c21vfgOm7bS9wZ.rss
   max_per_run: 2

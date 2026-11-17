@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 import feedparser
 import requests
+from rss_to_wp.feeds.corinth import NEWS as CORINTH_NEWS, district_news
 
 from rss_to_wp.utils import get_logger
 
@@ -26,6 +27,10 @@ def parse_feed(url: str) -> Optional[dict[str, Any]]:
     try:
         response = requests.get(url, timeout=(10, 30), headers={"User-Agent": "AlcornNewsRSS/2.0"})
         response.raise_for_status()
+        if url == CORINTH_NEWS:
+            if response.url.rstrip("/") != CORINTH_NEWS:
+                raise ValueError("Corinth School District news index moved")
+            return district_news(response.content)
         feed = feedparser.parse(response.content)
 
         # Check for parsing errors
