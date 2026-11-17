@@ -315,7 +315,9 @@ def process_entry(
             **audit,
         }
 
-    def hold(reason):
+    def hold(reason, *, source_needs_review=False):
+        if settings.max_drafts_per_run == 0:
+            return {"skipped": True, "reason": reason, "cache_rejection": source_needs_review, **audit}
         if budget.get("drafts", 0) >= settings.max_drafts_per_run:
             return {"skipped": True, "reason": "draft_budget_exhausted", **audit}
         issues = list(dict.fromkeys([reason, *assessment_issues(assessment)]))
@@ -417,7 +419,7 @@ def process_entry(
         if assessment.route == "reject":
             raise ContentRejectedError("no_real_news_value: " + assessment.reason)
         if assessment.route == "draft" or assessment_issues(assessment):
-            return hold(assessment.reason)
+            return hold(assessment.reason, source_needs_review=True)
         if assessment.route == "roundup":
             if assessment.requires_immediate_attention:
                 return hold("Source was not cleared to wait for a roundup")

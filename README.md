@@ -1,6 +1,6 @@
 # Alcorn County News: quality-first publishing
 
-RSS is a reporting input, not a publishing quota. Useful sources needing human judgment go to a nonpublic review draft. Content without real news value is rejected. Only fully approved articles publish. Fewer articles, including zero on a run, is a successful outcome.
+The scheduled publisher publishes every fully approved article within its per-run limits. It records editorial holds and reasons in the Actions report. Production sets `MAX_DRAFTS_PER_RUN=0`. The optional review-draft workflow described below applies to runs with a positive draft allowance.
 
 ## Publication requirements
 

@@ -103,6 +103,21 @@ def test_short_useful_brief_queues_but_uncertainty_goes_to_draft(
     writer.rewrite.assert_not_called()
 
 
+def test_zero_draft_budget_withholds_uncertain_sources_without_writing(
+    monkeypatch, settings, feed_config, article, review, context, image_bytes
+):
+    wp, writer = setup_pipeline(monkeypatch, article, review, context, image_bytes)
+    settings.max_drafts_per_run = 0
+    reading = assessment_for(article, route="draft")
+    writer.assess_source.side_effect = None
+    writer.assess_source.return_value = reading
+    result = cli.process_entry(entry_for(article), feed_config, settings, writer, wp, False, Mock())
+    assert result["skipped"] and result["cache_rejection"]
+    assert result["reason"] == reading.reason
+    wp.create_editorial_draft.assert_not_called()
+    wp.create_post.assert_not_called()
+
+
 @pytest.mark.parametrize("safe_to_wait", [False, True])
 def test_evidence_floor_only_pools_briefs_explicitly_cleared_to_wait(
     safe_to_wait, article, context

@@ -323,6 +323,8 @@ def _create_roundup(sources, plan, images, context, settings, writer, wp, dry_ru
             min_quality_score=settings.min_quality_score,
         )
     except ContentRejectedError as exc:
+        if settings.max_drafts_per_run == 0:
+            return {"skipped": True, "reason": str(exc)}
         if budget.get("drafts", 0) >= settings.max_drafts_per_run:
             return {"skipped": True, "reason": "draft_budget_exhausted"}
         categories = list(
