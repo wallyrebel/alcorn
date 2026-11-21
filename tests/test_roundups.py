@@ -29,6 +29,33 @@ from rss_to_wp.rewriter.openai_client import OpenAIRewriter
 from rss_to_wp.storage import DedupeStore
 
 
+@pytest.mark.parametrize(
+    ("finish", "refusal", "content", "choices", "expected"),
+    [
+        ("length", None, "{", True, "finish_reason='length' (completion limit 1500)"),
+        ("length", "private refusal detail", "{", True, "model refused the request"),
+        ("content_filter", None, "", True, "finish_reason='content_filter'"),
+        ("stop", None, " ", True, "model returned empty content"),
+        ("stop", None, "", False, "model returned no choices"),
+    ],
+)
+def test_incomplete_roundup_plan_records_the_stage_and_blocks(
+    finish, refusal, content, choices, expected
+):
+    response = reply({}, finish)
+    message = response.choices[0].message
+    message.refusal, message.content = refusal, content
+    if not choices:
+        response.choices = []
+    writer = model_writer(response)
+    with pytest.raises(RuntimeError) as failure:
+        writer.plan_roundup([{"source_id": i} for i in (1, 2, 3)], "2026-11-20T22:00:00Z")
+    assert str(failure.value).startswith("RoundupPlan: ")
+    assert expected in str(failure.value)
+    assert "private refusal detail" not in str(failure.value)
+    writer.client.chat.completions.create.assert_called_once()
+
+
 def sources_for(article, feed_config, count=3):
     sources = []
     for i in range(1, count + 1):

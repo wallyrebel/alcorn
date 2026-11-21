@@ -418,10 +418,6 @@ class OpenAIRewriter:
         else:
             params["temperature"] = 0.1
         response = self.client.chat.completions.create(**params)
-        choice = response.choices[0]
-        if choice.finish_reason != "stop" or choice.message.refusal or not choice.message.content:
-            raise RuntimeError("Incomplete or refused model response; publication blocked")
-        result = schema.model_validate_json(choice.message.content)
         if response.usage:
             logger.info(
                 "model_usage",
@@ -430,7 +426,20 @@ class OpenAIRewriter:
                 input_tokens=response.usage.prompt_tokens,
                 output_tokens=response.usage.completion_tokens,
             )
-        return result
+        stage = schema.__name__
+        if not response.choices:
+            raise RuntimeError(f"{stage}: model returned no choices")
+        choice = response.choices[0]
+        if choice.message.refusal:
+            raise RuntimeError(f"{stage}: model refused the request")
+        if choice.finish_reason != "stop":
+            raise RuntimeError(
+                f"{stage}: model stopped with finish_reason={choice.finish_reason!r} "
+                f"(completion limit {token_limit})"
+            )
+        if not choice.message.content or not choice.message.content.strip():
+            raise RuntimeError(f"{stage}: model returned empty content")
+        return schema.model_validate_json(choice.message.content)
 
     @staticmethod
     def _select_metadata(metadata):
