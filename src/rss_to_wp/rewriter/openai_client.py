@@ -654,7 +654,7 @@ class OpenAIRewriter:
             ROUNDUP_SEO_PROMPT,
             json.dumps({"article": article, "sources": sources}),
             RoundupSEO,
-            1500,
+            3000,
         )
         for key, lower, upper in (
             ("seo_title", 25, 70),

@@ -339,6 +339,8 @@ def test_writer_and_independent_editor_get_all_original_evidence(
     )
     assert result["body"] == combined["body"] and actual_sections == sections
     assert result["headline"] == combined["headline"]
+    seo_call = writer.client.chat.completions.create.call_args_list[1].kwargs
+    assert seo_call["max_completion_tokens"] == 3000
     messages = writer.client.chat.completions.create.call_args_list[2].kwargs["messages"][1][
         "content"
     ]
