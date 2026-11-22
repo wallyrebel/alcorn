@@ -341,9 +341,9 @@ def test_writer_and_independent_editor_get_all_original_evidence(
     assert result["headline"] == combined["headline"]
     seo_call = writer.client.chat.completions.create.call_args_list[1].kwargs
     assert seo_call["max_completion_tokens"] == 3000
-    messages = writer.client.chat.completions.create.call_args_list[2].kwargs["messages"][1][
-        "content"
-    ]
+    review_call = writer.client.chat.completions.create.call_args_list[2].kwargs
+    assert review_call["max_completion_tokens"] == 6500
+    messages = review_call["messages"][1]["content"]
     assert sum(p.get("image_url", {}).get("detail") == "high" for p in messages) == 3
     assert all(f"Original source {i}, image 1" in str(messages) for i in (1, 2, 3))
     if stock:

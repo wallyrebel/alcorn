@@ -720,7 +720,7 @@ class OpenAIRewriter:
                 },
                 visual_part(image["bytes"], document=True),
             ]
-        review = self._request(self.review_model, ROUNDUP_REVIEW_PROMPT, parts, RoundupReview, 4000)
+        review = self._request(self.review_model, ROUNDUP_REVIEW_PROMPT, parts, RoundupReview, 6500)
         require_approved_roundup(review, [s["source_id"] for s in sources], min_quality_score)
         self._check_featured_image(review, image_bytes, context)
         return {**article, "review": review.model_dump()}, sections
