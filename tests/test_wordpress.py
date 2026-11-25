@@ -175,3 +175,16 @@ def test_incomplete_staging_draft_resumes_without_second_creation(article, revie
     ]
     assert publish(wp, article, review)["status"] == "publish"
     assert not any(c.args == ("POST", "posts") for c in wp._request.call_args_list)
+
+
+@pytest.mark.parametrize("status,denied", [(401, True), (403, True), (429, False), (500, False)])
+def test_required_seopress_write_classifies_only_permission_errors(status, denied):
+    from rss_to_wp.wordpress.client import SEOPressPermissionError
+
+    wp = WordPressClient("https://example.test", "unused", "unused")
+    response = requests.Response()
+    response.status_code = status
+    wp.session.request = Mock(return_value=response)
+    with pytest.raises(SEOPressPermissionError if denied else requests.HTTPError):
+        wp._seo_request("PUT", 123, "title-description-metas", json={})
+    wp.session.request.assert_called_once()

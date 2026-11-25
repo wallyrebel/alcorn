@@ -50,6 +50,7 @@ from rss_to_wp.roundups import entry_fingerprint, load_pool, process_roundups
 from rss_to_wp.storage import DedupeStore
 from rss_to_wp.utils import setup_logging
 from rss_to_wp.wordpress import WordPressClient
+from rss_to_wp.wordpress.client import SEOPressPermissionError
 
 load_dotenv()
 app = typer.Typer(name="rss-to-wp", add_completion=False)
@@ -109,6 +110,7 @@ def run(
     offset = int(datetime.now(timezone.utc).timestamp() // 3600) % max(len(feeds), 1)
     feeds = feeds[offset:] + feeds[:offset]
     totals = [0, 0, 0]
+    blocked = False
     try:
         for feed in feeds:
             if (
@@ -135,19 +137,25 @@ def run(
                 report["decisions"].append({"feed": feed.name, "error": str(exc)})
                 counts = (0, 0, 1)
             totals = [a + b for a, b in zip(totals, counts)]
-        roundup_counts = process_roundups(
-            roundup_pool,
-            feeds,
-            settings,
-            store,
-            writer,
-            wp,
-            dry_run,
-            hours,
-            budget,
-            report["decisions"],
-        )
-        totals = [a + b for a, b in zip(totals, roundup_counts)]
+            if _seo_permission_blocked(budget):
+                blocked = True
+                report["blocked_reason"] = "repeated_required_seopress_permission_denial"
+                logger.error("publisher_circuit_open", reason=report["blocked_reason"])
+                break
+        if not blocked:
+            roundup_counts = process_roundups(
+                roundup_pool,
+                feeds,
+                settings,
+                store,
+                writer,
+                wp,
+                dry_run,
+                hours,
+                budget,
+                report["decisions"],
+            )
+            totals = [a + b for a, b in zip(totals, roundup_counts)]
     finally:
         report.update(
             processed=totals[0],
@@ -170,6 +178,10 @@ def run(
     # Rejections are healthy. Service/publishing failures must be visible in Actions.
     if totals[2]:
         raise typer.Exit(1)
+
+
+def _seo_permission_blocked(budget):
+    return budget.get("seo_permission_denials", 0) >= 2
 
 
 def process_feed(
@@ -210,6 +222,7 @@ def process_feed(
     for entry in entries:
         if (
             attempted >= feed_config.max_per_run
+            or _seo_permission_blocked(budget)
             or budget["candidates"] >= settings.max_candidates_per_run
             or budget["posts"] >= settings.max_posts_per_run
         ):
@@ -275,6 +288,10 @@ def process_feed(
                         result.get("link"),
                     )
         except Exception as exc:
+            if isinstance(exc, SEOPressPermissionError):
+                # Leave the source and any staging draft resumable. Only stop
+                # this run after two denials; the next scheduled run can recover.
+                budget["seo_permission_denials"] = budget.get("seo_permission_denials", 0) + 1
             errors += 1
             decision.update(error=str(exc))
             logger.error("entry_processing_error", title=title[:80], error=str(exc))

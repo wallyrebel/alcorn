@@ -254,3 +254,55 @@ def test_five_post_cap_stops_further_candidates(
     assert counts == (5, 0, 0)
     assert process.call_count == 5
     assert budget == {"posts": 5, "candidates": 5}
+
+
+@pytest.mark.parametrize("denials,expected_roundup", [(1, True), (2, False)])
+def test_cli_halts_only_after_repeated_required_seopress_denials(
+    monkeypatch, settings, feed_config, article, tmp_path, denials, expected_roundup
+):
+    import json
+
+    from typer.testing import CliRunner
+
+    from rss_to_wp.wordpress.client import SEOPressPermissionError
+
+    feed_config.max_per_run = 10
+    feed = SimpleNamespace(
+        entries=[entry_for(article) | {"link": f"https://example.test/news/{i}"} for i in range(4)],
+        feed={"title": "Corinth Library on Facebook", "link": feed_config.source_url},
+    )
+    monkeypatch.setattr(cli, "get_app_settings", Mock(return_value=settings))
+    monkeypatch.setattr(cli, "load_feeds_config", Mock(return_value=SimpleNamespace(feeds=[feed_config])))
+    monkeypatch.setattr(cli, "get_data_dir", Mock(return_value=tmp_path))
+    monkeypatch.setattr(cli, "parse_feed", Mock(return_value=feed))
+    monkeypatch.setattr(cli, "WordPressClient", Mock())
+    monkeypatch.setattr(cli, "OpenAIRewriter", Mock())
+    monkeypatch.setattr(cli, "load_pool", Mock(return_value={}))
+    roundup = Mock(return_value=(0, 0, 0))
+    monkeypatch.setattr(cli, "process_roundups", roundup)
+    store = Mock()
+    store.is_processed.return_value = False
+    store.source_seen.return_value = False
+    store.rejection_reason.return_value = None
+    monkeypatch.setattr(cli, "DedupeStore", Mock(return_value=store))
+    attempted_urls = []
+
+    def process_entry(entry, *_, budget):
+        attempted_urls.append(entry["link"])
+        budget["candidates"] += 1
+        if len(attempted_urls) <= denials:
+            raise SEOPressPermissionError("required metadata denied")
+        return {"skipped": True, "reason": "not a story"}
+
+    monkeypatch.setattr(cli, "process_entry", process_entry)
+    result = CliRunner().invoke(cli.app, ["run"])
+    assert result.exit_code == 1, result.output
+    report = json.loads((tmp_path / "run-report.json").read_text())
+    assert report["errors"] == denials
+    assert report["budget"]["seo_permission_denials"] == denials
+    assert len(attempted_urls) == (4 if expected_roundup else 2)
+    assert len(report["decisions"]) == len(attempted_urls)
+    assert roundup.called is expected_roundup
+    assert ("blocked_reason" in report) is not expected_roundup
+    store.mark_processed.assert_not_called()
+    store.record_rejection.assert_not_called()

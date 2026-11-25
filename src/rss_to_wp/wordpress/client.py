@@ -31,6 +31,10 @@ from rss_to_wp.images.downloader import publication_dimensions
 from rss_to_wp.wordpress.media import wp_upload_media
 
 
+class SEOPressPermissionError(RuntimeError):
+    """Required metadata was denied for this staged post."""
+
+
 class WordPressClient:
     def __init__(
         self,
@@ -394,6 +398,11 @@ class WordPressClient:
             f"/{suffix}" if suffix else ""
         )
         response = self.session.request(method, url, timeout=(10, 30), **kwargs)
+        if method == "PUT" and response.status_code in (401, 403):
+            raise SEOPressPermissionError(
+                f"Required SEOPress {suffix} denied with HTTP {response.status_code} "
+                f"for WordPress post {post_id}"
+            )
         response.raise_for_status()
         data = response.json()
         if method == "PUT" and data.get("code") != "success":
