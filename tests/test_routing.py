@@ -18,7 +18,7 @@ from rss_to_wp.editorial import (
     SourceIssue,
     validate_assessment,
 )
-from rss_to_wp.images.downloader import download_image, featured_size
+from rss_to_wp.images.downloader import download_image, featured_size, source_featured_size
 from rss_to_wp.images.rss_extractor import find_rss_images
 from rss_to_wp.rewriter.openai_client import OpenAIRewriter
 
@@ -52,8 +52,10 @@ def test_image_only_notice_is_assessed_and_saved_as_draft(
     writer.assess_source.side_effect = None
     writer.assess_source.return_value = assessment_for(article)
     entry = entry_for(article) | {"summary": '<img src="https://example.test/notice.jpg">'}
+    cli.find_rss_images.return_value = ["https://example.test/notice.jpg"]
     result = cli.process_entry(entry, feed_config, settings, writer, wp, False, Mock())
     assert result["status"] == "draft" and result["source_words"] == 0
+    cli.download_image.assert_any_call("https://example.test/notice.jpg", min_width=1, min_height=1)
     assert len(writer.assess_source.call_args.args[3]) == 1
     wp.create_editorial_draft.assert_called_once()
     writer.rewrite.assert_not_called()
@@ -99,13 +101,16 @@ def test_uncertainty_routes_to_draft_not_publication(
     wp.upload_media.assert_called_once()
 
 
-def test_source_graphic_readability_and_featured_size_are_separate(monkeypatch):
+@pytest.mark.parametrize("size", [(720, 1067), (116, 383)])
+def test_source_graphic_readability_and_featured_size_are_separate(monkeypatch, size):
     buf = BytesIO()
-    Image.new("RGB", (720, 1067), "white").save(buf, "JPEG")
+    Image.new("RGB", size, "white").save(buf, "JPEG")
     monkeypatch.setattr("requests.get", Mock(return_value=image_response(buf.getvalue())))
     assert download_image("https://example.test/notice.jpg") is None
-    result = download_image("https://example.test/notice.jpg", min_width=200, min_height=200)
+    result = download_image("https://example.test/notice.jpg", min_width=1, min_height=1)
     assert result is not None and not featured_size(result[0])
+    if size == (116, 383):
+        assert not source_featured_size(result[0])
 
 
 def test_assessment_requires_every_image_to_be_accounted_for(article, context):

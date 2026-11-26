@@ -383,7 +383,8 @@ def process_entry(
         # Count each evaluated source once, including short and image-only notices.
         budget["candidates"] += 1
         for url in image_urls[:3]:
-            downloaded = download_image(url, min_width=200, min_height=200)
+            # Review the supplied evidence at its native size. Publication has a separate size check.
+            downloaded = download_image(url, min_width=1, min_height=1)
             if not downloaded:
                 # Never cache a CDN/read failure as proof the source lacks value.
                 raise RuntimeError("Source graphic unavailable for assessment; retry later")
